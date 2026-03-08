@@ -345,6 +345,7 @@ def _render_rolling_optimization(returns, params, hedge_result):
                 hedge_instruments=hedge_result.hedge_instruments,
                 strategy=hedge_result.strategy,
                 bounds=(-1.0, 0.0) if hedge_result.weights[0] <= 0 else (0.0, 1.0),
+                static_weights=hedge_result.weights,
                 window=ro_window,
                 step=ro_step,
                 factors=list(hedge_result.portfolio_betas.keys()) if hedge_result.portfolio_betas else None,
@@ -366,6 +367,41 @@ def _render_rolling_optimization(returns, params, hedge_result):
         st.info("Set parameters and click **Run Rolling Optimization**.")
         return
 
+    # 3-line cumulative return chart
+    fig_cum = go.Figure()
+    for name, series, color in [
+        ("Unhedged", ro_result.cumulative_unhedged, "#2563eb"),
+        ("Static Hedge", ro_result.cumulative_static, "#16a34a"),
+        ("Rolling Hedge", ro_result.cumulative_rolling, "#dc2626"),
+    ]:
+        fig_cum.add_trace(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=name,
+            line=dict(width=2, color=color),
+        ))
+    fig_cum.update_layout(**PLOTLY_LAYOUT)
+    fig_cum.update_layout(title="Cumulative Returns: Unhedged vs Static vs Rolling", height=400)
+    st.plotly_chart(fig_cum, use_container_width=True)
+
+    # Rolling vol chart (3 lines)
+    fig_vol = go.Figure()
+    for name, series, color in [
+        ("Unhedged", ro_result.rolling_vol_unhedged, "#2563eb"),
+        ("Static Hedge", ro_result.rolling_vol_static, "#16a34a"),
+        ("Rolling Hedge", ro_result.rolling_vol_rolling, "#dc2626"),
+    ]:
+        fig_vol.add_trace(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=name,
+            line=dict(width=2, color=color),
+        ))
+    fig_vol.update_layout(**PLOTLY_LAYOUT)
+    fig_vol.update_layout(
+        title="Rolling Volatility (Annualized)",
+        yaxis_title="Volatility",
+        yaxis_tickformat=".0%",
+        height=350,
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
+
     # Weight evolution chart
     fig_wt = go.Figure()
     for col in ro_result.weight_history.columns:
@@ -374,30 +410,13 @@ def _render_rolling_optimization(returns, params, hedge_result):
             y=ro_result.weight_history[col].values,
             mode="lines",
             name=col,
+            stackgroup="one",
         ))
     fig_wt.update_layout(**PLOTLY_LAYOUT)
     fig_wt.update_layout(title="Weight Evolution (Walk-Forward)", height=350)
     st.plotly_chart(fig_wt, use_container_width=True)
 
-    # Rolling hedged vol
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Scatter(
-        x=ro_result.vol_history.index,
-        y=ro_result.vol_history.values,
-        mode="lines",
-        name="Hedged Vol (ann.)",
-        line=dict(width=2, color="#2563eb"),
-    ))
-    fig_vol.update_layout(**PLOTLY_LAYOUT)
-    fig_vol.update_layout(
-        title="Rolling Hedged Volatility",
-        yaxis_title="Annualized Vol",
-        yaxis_tickformat=".0%",
-        height=300,
-    )
-    st.plotly_chart(fig_vol, use_container_width=True)
-
-    # Turnover
+    # Turnover bars
     if len(ro_result.turnover) > 0:
         fig_to = go.Figure(data=go.Bar(
             x=ro_result.turnover.index,
@@ -405,8 +424,22 @@ def _render_rolling_optimization(returns, params, hedge_result):
             marker_color="#7c3aed",
         ))
         fig_to.update_layout(**PLOTLY_LAYOUT)
-        fig_to.update_layout(title="Turnover Between Optimizations", height=280, yaxis_title="Turnover")
+        fig_to.update_layout(title="Turnover Between Optimizations", height=300, yaxis_title="Turnover")
         st.plotly_chart(fig_to, use_container_width=True)
+
+    # 3-column metrics table
+    st.subheader("Rolling Optimization Metrics")
+    pct_rows = {"Total Return", "Ann. Return", "Ann. Volatility", "Max Drawdown", "Tracking Error"}
+    int_rows = {"Max DD Duration (days)"}
+    fmt = ro_result.metrics.copy()
+    for col in fmt.columns:
+        fmt[col] = fmt.index.map(
+            lambda idx, c=col: f"{ro_result.metrics.loc[idx, c]:.2%}"
+            if idx in pct_rows
+            else (f"{int(ro_result.metrics.loc[idx, c])}" if idx in int_rows
+                  else f"{ro_result.metrics.loc[idx, c]:.2f}")
+        )
+    st.dataframe(fmt, use_container_width=True)
 
     # Weight stability table
     st.caption("Weight Stability (standard deviation over time)")
