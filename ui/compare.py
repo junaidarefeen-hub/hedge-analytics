@@ -248,6 +248,17 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
             for strat, reason in result.failed_strategies.items():
                 st.warning(f"{strat} failed: {reason}")
 
+        # Beta-neutral infeasibility warning
+        for comp in result.comparisons:
+            if comp.strategy == "Beta-Neutral" and comp.hedge_result.beta_neutral_feasible is False:
+                st.warning(
+                    "Beta-neutral constraints were **infeasible** with current weight bounds "
+                    "and hedge universe. The optimizer minimized beta exposure as far as "
+                    "possible. Consider using Factors/Indices in the hedge universe, or "
+                    "reducing the number of neutralization factors."
+                )
+                break
+
         # Recommendation
         st.success(f"**Recommended: {result.recommended_strategy}** — best composite rank across all metrics")
 
