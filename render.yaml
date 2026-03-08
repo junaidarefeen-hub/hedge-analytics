@@ -8,3 +8,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.6"
+      - key: PEER_GROUPS_DIR
+        value: /data
+    disk:
+      name: hedge-data
+      mountPath: /data
+      sizeGB: 1

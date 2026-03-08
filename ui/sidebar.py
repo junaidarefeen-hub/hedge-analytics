@@ -17,21 +17,42 @@ from config import (
 from data.fetcher import clear_cache, validate_interval_date_range
 from utils.validation import parse_tickers, validate_date_range
 
-_PEER_GROUPS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "peer_groups.json")
+_LOCAL_PEER_GROUPS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "peer_groups.json")
+
+
+def _peer_groups_path() -> str:
+    """Return the peer groups JSON path — persistent disk on Render, local file otherwise."""
+    peer_dir = os.environ.get("PEER_GROUPS_DIR")
+    if peer_dir and os.path.isdir(peer_dir):
+        return os.path.join(peer_dir, "peer_groups.json")
+    return _LOCAL_PEER_GROUPS_PATH
 
 
 def _load_peer_groups() -> dict:
     """Load saved peer groups from JSON file."""
+    path = _peer_groups_path()
     try:
-        with open(_PEER_GROUPS_PATH, "r") as f:
+        with open(path, "r") as f:
             return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    # Fall back to local defaults (e.g. first run on Render disk)
+    try:
+        with open(_LOCAL_PEER_GROUPS_PATH, "r") as f:
+            groups = json.load(f)
+        # Seed the persistent path if it's different
+        if path != _LOCAL_PEER_GROUPS_PATH:
+            _save_peer_groups(groups)
+        return groups
     except (FileNotFoundError, json.JSONDecodeError):
         return {"stocks": {}, "factors": {}}
 
 
 def _save_peer_groups(groups: dict):
     """Save peer groups to JSON file."""
-    with open(_PEER_GROUPS_PATH, "w") as f:
+    path = _peer_groups_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
         json.dump(groups, f, indent=4)
 
 
