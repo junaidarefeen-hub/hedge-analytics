@@ -88,6 +88,11 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
     if stored_hash and stored_hash != current_hash:
         st.warning("Sidebar parameters have changed since last optimization. Backtest may use stale hedge weights.")
 
+    st.caption(
+        "Test how your hedge would have performed historically. The static backtest applies fixed weights over the period. "
+        "The dynamic rebalancing backtest periodically re-optimizes weights, simulating a real-world rebalancing schedule."
+    )
+
     st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**")
 
     # Controls
@@ -96,13 +101,17 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
     max_date = returns.index.max().date()
 
     with c1:
-        bt_start = st.date_input("Backtest start", value=min_date, min_value=min_date, max_value=max_date, key="bt_start")
+        bt_start = st.date_input("Backtest start", value=min_date, min_value=min_date, max_value=max_date, key="bt_start",
+                                  help="Start date for the backtest period.")
     with c2:
-        bt_end = st.date_input("Backtest end", value=max_date, min_value=min_date, max_value=max_date, key="bt_end")
+        bt_end = st.date_input("Backtest end", value=max_date, min_value=min_date, max_value=max_date, key="bt_end",
+                                help="End date for the backtest period.")
     with c3:
-        roll_window = st.number_input("Rolling vol window", min_value=10, max_value=252, value=DEFAULT_ROLLING_VOL_WINDOW, step=10, key="bt_roll")
+        roll_window = st.number_input("Rolling vol window", min_value=10, max_value=252, value=DEFAULT_ROLLING_VOL_WINDOW, step=10, key="bt_roll",
+                                      help="Number of trading days used to compute rolling volatility in the chart. Does not affect performance metrics.")
     with c4:
-        risk_free = st.number_input("Risk-free rate", min_value=0.0, max_value=0.20, value=DEFAULT_RISK_FREE_RATE, step=0.01, format="%.2f", key="bt_rf")
+        risk_free = st.number_input("Risk-free rate", min_value=0.0, max_value=0.20, value=DEFAULT_RISK_FREE_RATE, step=0.01, format="%.2f", key="bt_rf",
+                                    help="Annual risk-free rate used to calculate Sharpe and Sortino ratios. Typically the current T-bill yield.")
 
     run_bt = st.button("Run Backtest", type="primary", key="bt_run")
 
@@ -158,6 +167,7 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
         index=0,
         horizontal=True,
         key="bt_mode",
+        help="Static: hedge weights stay fixed for the entire period. Dynamic: weights are re-optimized at regular intervals (weekly/monthly/quarterly) using a trailing lookback window.",
     )
 
     if mode == "Dynamic Rebalancing Backtest":
@@ -173,6 +183,7 @@ def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
             options=REBALANCE_FREQUENCIES,
             index=REBALANCE_FREQUENCIES.index(DEFAULT_REBALANCE_FREQUENCY),
             key="dyn_freq",
+            help="How often to re-optimize hedge weights. More frequent rebalancing adapts faster but increases turnover and transaction costs.",
         )
     with dc2:
         lookback = st.number_input(
@@ -182,6 +193,7 @@ def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
             value=DEFAULT_LOOKBACK_WINDOW,
             step=10,
             key="dyn_lookback",
+            help="Number of trailing trading days used for each re-optimization. Larger windows use more history for a more stable estimate.",
         )
 
     run_dyn = st.button("Run Dynamic Backtest", type="primary", key="dyn_run")

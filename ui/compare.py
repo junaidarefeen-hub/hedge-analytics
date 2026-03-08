@@ -124,15 +124,23 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
     stock_tickers = [t for t in params.get("stock_tickers", []) if t in returns.columns]
     factor_tickers = [t for t in params.get("factor_tickers", []) if t in returns.columns]
 
+    st.caption(
+        "Run all four hedging strategies side-by-side and compare their performance. "
+        "The app ranks each strategy across multiple metrics and recommends the best overall approach. "
+        "You can then load any strategy into the Optimizer and Backtest tabs for deeper analysis."
+    )
+
     col_ctrl, col_results = st.columns([1, 2])
 
     with col_ctrl:
         st.subheader("Controls")
 
-        target = st.selectbox("Target (long position)", options=all_tickers, index=0, key="cmp_target")
+        target = st.selectbox("Target (long position)", options=all_tickers, index=0, key="cmp_target",
+                              help="The ticker you hold long and want to hedge against.")
 
         notional = st.number_input(
             "Notional ($)", min_value=1000.0, value=DEFAULT_NOTIONAL, step=10000.0, format="%.0f", key="cmp_notional",
+            help="Dollar value of your long position.",
         )
 
         hedge_universe = st.selectbox(
@@ -145,8 +153,10 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
             help="Minimum number of instruments in the hedge basket.",
         )
 
-        lb = st.number_input("Weight lower bound", value=DEFAULT_WEIGHT_BOUNDS[0], step=0.1, format="%.2f", key="cmp_lb")
-        ub = st.number_input("Weight upper bound", value=DEFAULT_WEIGHT_BOUNDS[1], step=0.1, format="%.2f", key="cmp_ub")
+        lb = st.number_input("Weight lower bound", value=DEFAULT_WEIGHT_BOUNDS[0], step=0.1, format="%.2f", key="cmp_lb",
+                             help="Minimum weight per hedge instrument. Negative = short positions.")
+        ub = st.number_input("Weight upper bound", value=DEFAULT_WEIGHT_BOUNDS[1], step=0.1, format="%.2f", key="cmp_ub",
+                             help="Maximum weight per hedge instrument.")
 
         if lb >= ub:
             st.error("Lower bound must be less than upper bound.")
@@ -159,11 +169,13 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
         available_factors = [f for f in factor_tickers if f in returns.columns and f != target]
         selected_factors = st.multiselect(
             "Neutralize against factors", options=available_factors, default=available_factors, key="cmp_factors",
+            help="Factors used by the Beta-Neutral strategy to neutralize market exposure.",
         ) if available_factors else []
 
         st.caption("CVaR settings")
         confidence = st.slider(
             "Confidence level", min_value=0.90, max_value=0.99, value=DEFAULT_CVAR_CONFIDENCE, step=0.01, key="cmp_conf",
+            help="Confidence level for the Tail Risk (CVaR) strategy. Higher values target more extreme tail losses.",
         )
 
         st.divider()
@@ -179,10 +191,12 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
 
         risk_free = st.number_input(
             "Risk-free rate", min_value=0.0, max_value=0.20, value=DEFAULT_RISK_FREE_RATE, step=0.01, format="%.2f", key="cmp_rf",
+            help="Annual risk-free rate for Sharpe and Sortino ratio calculations.",
         )
 
         roll_window = st.number_input(
             "Rolling vol window", min_value=10, max_value=252, value=DEFAULT_ROLLING_VOL_WINDOW, step=10, key="cmp_roll",
+            help="Window for computing rolling volatility in backtest charts.",
         )
 
         # Build hedge instruments

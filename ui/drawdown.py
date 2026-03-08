@@ -56,6 +56,11 @@ def _drawdown_table(analysis) -> pd.DataFrame:
 
 def render_drawdown_tab(returns: pd.DataFrame, params: dict):
     """Render the Drawdown Analysis tab."""
+    st.caption(
+        "Analyze peak-to-trough declines in portfolio value. Drawdowns show how much a portfolio fell from its high point "
+        "before recovering. Compare hedged vs unhedged drawdowns to see if your hedge reduces downside severity and duration."
+    )
+
     all_tickers = list(returns.columns)
 
     mode = st.radio(
@@ -63,11 +68,14 @@ def render_drawdown_tab(returns: pd.DataFrame, params: dict):
         options=["Standalone (any ticker)", "Hedged vs Unhedged"],
         horizontal=True,
         key="dd_mode",
+        help="Standalone: analyze drawdowns for any single ticker. Hedged vs Unhedged: compare drawdowns side-by-side using your backtest results.",
     )
 
     if mode == "Standalone (any ticker)":
-        ticker = st.selectbox("Select ticker", options=all_tickers, index=0, key="dd_ticker")
-        top_n = st.slider("Worst N drawdowns", min_value=1, max_value=10, value=5, key="dd_topn")
+        ticker = st.selectbox("Select ticker", options=all_tickers, index=0, key="dd_ticker",
+                              help="Choose which ticker to analyze for drawdown periods.")
+        top_n = st.slider("Worst N drawdowns", min_value=1, max_value=10, value=5, key="dd_topn",
+                          help="Number of worst drawdown periods to display in the table below.")
 
         # Compute cumulative returns for the selected ticker
         cum = (1 + returns[ticker]).cumprod()
@@ -97,7 +105,8 @@ def render_drawdown_tab(returns: pd.DataFrame, params: dict):
             st.info("Run a **Backtest** first to compare hedged vs unhedged drawdowns.")
             return
 
-        top_n = st.slider("Worst N drawdowns", min_value=1, max_value=10, value=5, key="dd_topn_h")
+        top_n = st.slider("Worst N drawdowns", min_value=1, max_value=10, value=5, key="dd_topn_h",
+                          help="Number of worst drawdown periods to display for each portfolio.")
 
         analysis_un = compute_drawdowns(bt_result.cumulative_unhedged, top_n=top_n)
         analysis_h = compute_drawdowns(bt_result.cumulative_hedged, top_n=top_n)

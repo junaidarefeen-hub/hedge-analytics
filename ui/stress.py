@@ -101,6 +101,11 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
     if stored_hash and stored_hash != current_hash:
         st.warning("Sidebar parameters have changed since last optimization. Stress test may use stale hedge weights.")
 
+    st.caption(
+        "See how your hedge performs under extreme market conditions. Replay historical crises (e.g., COVID crash, GFC) "
+        "or define custom shock scenarios to estimate the P&L impact on your hedged vs unhedged portfolio."
+    )
+
     st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**")
 
     col_ctrl, col_results = st.columns([1, 2])
@@ -108,7 +113,8 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
     with col_ctrl:
         st.subheader("Controls")
 
-        mode = st.radio("Mode", ["Historical", "Custom", "Both"], horizontal=True, key="stress_mode")
+        mode = st.radio("Mode", ["Historical", "Custom", "Both"], horizontal=True, key="stress_mode",
+                        help="Historical: replay actual market crises from your data. Custom: define your own shock scenarios. Both: run all together.")
 
         selected_scenarios = []
         custom_scenarios_list = []
@@ -198,6 +204,7 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
         notional = st.number_input(
             "Portfolio notional ($)", min_value=1000.0,
             value=hedge_result.target_notional, step=10000.0, format="%.0f", key="stress_notional",
+            help="Dollar value of the portfolio used to calculate P&L impact in dollar terms.",
         )
 
         run_stress = st.button("Run Stress Test", type="primary", use_container_width=True, key="stress_run")

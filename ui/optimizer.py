@@ -99,6 +99,12 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
     stock_tickers = [t for t in params.get("stock_tickers", []) if t in returns.columns]
     factor_tickers = [t for t in params.get("factor_tickers", []) if t in returns.columns]
 
+    st.caption(
+        "Find the optimal hedge portfolio to reduce the volatility of a target position. "
+        "Choose a strategy, set weight bounds, and the optimizer will allocate across your hedge universe "
+        "to minimize risk. You can also run a walk-forward rolling optimization to see how hedge weights evolve over time."
+    )
+
     col_ctrl, col_results = st.columns([1, 2])
 
     with col_ctrl:
@@ -109,6 +115,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
             options=all_tickers,
             index=0,
             key="opt_target",
+            help="The ticker you hold long and want to hedge against.",
         )
 
         notional = st.number_input(
@@ -118,6 +125,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
             step=10000.0,
             format="%.0f",
             key="opt_notional",
+            help="Dollar value of your long position. Used to calculate hedge notional amounts.",
         )
 
         hedge_universe = st.selectbox(
@@ -133,6 +141,8 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
             options=STRATEGY_OPTIONS,
             index=STRATEGY_OPTIONS.index(DEFAULT_STRATEGY),
             key="opt_strategy",
+            help="Minimum Variance: minimize portfolio volatility. Beta-Neutral: zero out market beta exposure. "
+                 "Tail Risk (CVaR): minimize expected losses in the worst scenarios. Risk Parity: allocate inversely to volatility.",
         )
 
         # Strategy-specific controls
@@ -147,6 +157,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
                     options=available_factors,
                     default=available_factors,
                     key="opt_factors",
+                    help="Select which market factors to neutralize beta against. The optimizer will try to make the hedged portfolio beta-zero to each selected factor.",
                 )
             else:
                 st.warning("No factor tickers available. Add factors in the sidebar.")
@@ -159,6 +170,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
                 value=DEFAULT_CVAR_CONFIDENCE,
                 step=0.01,
                 key="opt_confidence",
+                help="The probability threshold for CVaR (Conditional Value at Risk). Higher values focus on more extreme tail losses (e.g., 99% looks at the worst 1% of outcomes).",
             )
 
         st.divider()
@@ -174,8 +186,10 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
                  "Caps max weight per name to 1/N. Set 0 to disable.",
         )
 
-        lb = st.number_input("Weight lower bound", value=DEFAULT_WEIGHT_BOUNDS[0], step=0.1, format="%.2f", key="opt_lb")
-        ub = st.number_input("Weight upper bound", value=DEFAULT_WEIGHT_BOUNDS[1], step=0.1, format="%.2f", key="opt_ub")
+        lb = st.number_input("Weight lower bound", value=DEFAULT_WEIGHT_BOUNDS[0], step=0.1, format="%.2f", key="opt_lb",
+                             help="Minimum weight per hedge instrument. Negative = short positions (typical for hedging). E.g., -1.0 allows full short allocation.")
+        ub = st.number_input("Weight upper bound", value=DEFAULT_WEIGHT_BOUNDS[1], step=0.1, format="%.2f", key="opt_ub",
+                             help="Maximum weight per hedge instrument. Set to 0.0 for short-only hedges, or positive to allow long hedge positions.")
 
         if lb >= ub:
             st.error("Lower bound must be less than upper bound.")
@@ -314,6 +328,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
             index=0,
             horizontal=True,
             key="opt_mode",
+            help="Static uses a single optimization over the full period. Rolling re-optimizes at regular intervals using a sliding window, showing how optimal hedge weights change over time.",
         )
 
         if opt_mode == "Rolling Optimization (Walk-Forward)":
@@ -327,11 +342,13 @@ def _render_rolling_optimization(returns, params, hedge_result):
         ro_window = st.number_input(
             "Rolling window (days)", min_value=30, max_value=504,
             value=ROLLING_OPT_WINDOW, step=10, key="ro_window",
+            help="Number of trading days used for each optimization. Larger windows are more stable but less responsive to recent changes.",
         )
     with rc2:
         ro_step = st.number_input(
             "Step (days)", min_value=5, max_value=120,
             value=ROLLING_OPT_STEP, step=5, key="ro_step",
+            help="Number of trading days between each re-optimization. Smaller steps give more frequent updates but take longer to compute.",
         )
 
     run_ro = st.button("Run Rolling Optimization", type="primary", key="ro_run")

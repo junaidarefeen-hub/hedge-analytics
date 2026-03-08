@@ -77,6 +77,7 @@ tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_backtest, tab_mc, tab_
 
 # --- Data Tab ---
 with tab_data:
+    st.caption("View the tickers loaded from the sidebar and their historical closing prices.")
     if valid_stocks:
         st.subheader("Stocks / ETFs")
         names_df = pd.DataFrame(
@@ -107,6 +108,11 @@ with tab_data:
 
 # --- Correlation Tab ---
 with tab_corr:
+    st.caption(
+        "Explore how your tickers move together. The heatmap shows pairwise correlations across all tickers. "
+        "The rolling chart tracks how the relationship between any two tickers changes over time. "
+        "The dendrogram (3+ tickers) groups tickers by similarity."
+    )
     col_left, col_right = st.columns(2)
 
     with col_left:
@@ -117,9 +123,11 @@ with tab_corr:
         all_t = params["all_tickers"]
         c1, c2 = st.columns(2)
         with c1:
-            ta = st.selectbox("Ticker A", options=all_t, index=0, key="corr_ticker_a")
+            ta = st.selectbox("Ticker A", options=all_t, index=0, key="corr_ticker_a",
+                              help="First ticker for the rolling correlation chart.")
         with c2:
-            tb = st.selectbox("Ticker B", options=all_t, index=min(1, len(all_t) - 1), key="corr_ticker_b")
+            tb = st.selectbox("Ticker B", options=all_t, index=min(1, len(all_t) - 1), key="corr_ticker_b",
+                              help="Second ticker for the rolling correlation chart.")
         if ta == tb:
             st.caption("Same ticker selected — correlation = 1.0")
         if ta in returns.columns and tb in returns.columns:
@@ -139,6 +147,10 @@ with tab_corr:
 
 # --- Beta Tab ---
 with tab_beta:
+    st.caption(
+        "Measure how sensitive each ticker is to market benchmarks. Beta > 1 means the ticker amplifies benchmark moves; "
+        "beta < 1 means it's less volatile. The rolling chart shows how this sensitivity changes over time."
+    )
     benchmarks = [b for b in params["benchmarks"] if b in returns.columns]
     if not benchmarks:
         st.info("Add at least one factor/index ticker to compute betas.")
@@ -153,10 +165,12 @@ with tab_beta:
             all_t = params["all_tickers"]
             b1, b2 = st.columns(2)
             with b1:
-                bb = st.selectbox("Benchmark", options=benchmarks, index=0, key="beta_benchmark")
+                bb = st.selectbox("Benchmark", options=benchmarks, index=0, key="beta_benchmark",
+                                  help="The market index or factor to measure beta against.")
             with b2:
                 non_bench = [t for t in all_t if t != bb]
-                bt = st.selectbox("Ticker", options=non_bench or all_t, index=0, key="beta_ticker")
+                bt = st.selectbox("Ticker", options=non_bench or all_t, index=0, key="beta_ticker",
+                                  help="The ticker whose beta to the benchmark you want to track over time.")
             if bt in returns.columns and bb in returns.columns:
                 rb = rolling_beta(returns, bt, bb, params["window"])
                 st.plotly_chart(

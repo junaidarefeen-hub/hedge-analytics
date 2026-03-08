@@ -151,6 +151,11 @@ def render_montecarlo_tab(returns: pd.DataFrame, params: dict):
     if stored_hash and stored_hash != current_hash:
         st.warning("Sidebar parameters have changed since last optimization. Simulation may use stale hedge weights.")
 
+    st.caption(
+        "Simulate thousands of possible future outcomes for your hedged and unhedged portfolios using Monte Carlo methods. "
+        "Returns are randomly sampled from the historical distribution to estimate the range of possible gains and losses."
+    )
+
     st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**")
 
     col_ctrl, col_results = st.columns([1, 2])
@@ -161,26 +166,31 @@ def render_montecarlo_tab(returns: pd.DataFrame, params: dict):
         horizon = st.selectbox(
             "Horizon (days)", options=MC_HORIZON_OPTIONS,
             index=MC_HORIZON_OPTIONS.index(MC_DEFAULT_HORIZON), key="mc_horizon",
+            help="Number of trading days to simulate forward. 252 days ≈ 1 year.",
         )
 
         num_sims = st.selectbox(
             "Number of simulations", options=MC_NUM_SIMS_OPTIONS,
             index=MC_NUM_SIMS_OPTIONS.index(MC_DEFAULT_NUM_SIMS), key="mc_num_sims",
+            help="More simulations give smoother results but take longer to compute.",
         )
 
         initial_value = st.number_input(
             "Initial portfolio value ($)", min_value=1000.0,
             value=hedge_result.target_notional, step=10000.0, format="%.0f", key="mc_initial",
+            help="Starting dollar value of the portfolio for the simulation.",
         )
 
         conf_options = [0.90, 0.95, 0.99]
         conf_levels = st.multiselect(
             "VaR confidence levels", options=conf_options, default=[0.95, 0.99], key="mc_conf",
+            help="Confidence levels for Value at Risk (VaR) and Conditional VaR calculations. E.g., 95% VaR is the loss exceeded only 5% of the time.",
         )
         if not conf_levels:
             conf_levels = [0.95]
 
-        use_seed = st.checkbox("Reproducible (fixed seed)", value=True, key="mc_seed_toggle")
+        use_seed = st.checkbox("Reproducible (fixed seed)", value=True, key="mc_seed_toggle",
+                               help="When checked, simulations use a fixed random seed so results are the same each time you run. Uncheck for different random outcomes each run.")
 
         run_mc = st.button("Run Simulation", type="primary", use_container_width=True, key="mc_run")
 

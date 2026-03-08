@@ -84,17 +84,26 @@ def _rolling_vol_with_regimes(regime_result: RegimeResult) -> go.Figure:
 
 def render_regime_tab(returns: pd.DataFrame, params: dict):
     """Render the Regime Detection tab."""
+    st.caption(
+        "Detect volatility regimes (low, normal, high) in the market based on rolling volatility of a reference ticker. "
+        "This helps you understand how your hedge performs differently in calm vs turbulent markets."
+    )
+
     all_tickers = list(returns.columns)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        ref_ticker = st.selectbox("Reference ticker", options=all_tickers, index=0, key="reg_ref")
+        ref_ticker = st.selectbox("Reference ticker", options=all_tickers, index=0, key="reg_ref",
+                                  help="The ticker whose rolling volatility is used to define market regimes. Typically a broad index like SPY.")
     with c2:
-        vol_window = st.number_input("Vol window", min_value=10, max_value=252, value=REGIME_VOL_WINDOW, step=10, key="reg_window")
+        vol_window = st.number_input("Vol window", min_value=10, max_value=252, value=REGIME_VOL_WINDOW, step=10, key="reg_window",
+                                     help="Number of trading days for computing rolling volatility. Larger windows smooth out short-term noise.")
     with c3:
-        n_regimes = st.number_input("# Regimes", min_value=2, max_value=5, value=REGIME_N_REGIMES, step=1, key="reg_n")
+        n_regimes = st.number_input("# Regimes", min_value=2, max_value=5, value=REGIME_N_REGIMES, step=1, key="reg_n",
+                                    help="Number of volatility regimes to detect. 3 regimes = low/normal/high vol environments.")
     with c4:
-        method = st.selectbox("Method", options=REGIME_METHODS, index=0, key="reg_method")
+        method = st.selectbox("Method", options=REGIME_METHODS, index=0, key="reg_method",
+                              help="Quantile: split by percentile thresholds (simpler, deterministic). K-Means: cluster by volatility levels (data-driven, may vary between runs).")
 
     run_regime = st.button("Detect Regimes", type="primary", key="reg_run")
 
