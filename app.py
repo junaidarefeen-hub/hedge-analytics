@@ -13,6 +13,7 @@ from ui.sidebar import render_sidebar
 from ui.style import inject_css
 from ui.backtest import render_backtest_tab
 from ui.compare import render_compare_tab
+from ui.montecarlo import render_montecarlo_tab
 from ui.optimizer import render_optimizer_tab
 from ui.timeseries import rolling_beta_chart, rolling_correlation_chart
 from utils.validation import check_data_sufficiency
@@ -66,8 +67,8 @@ if sufficiency_warn:
     st.warning(sufficiency_warn)
 
 # Tabs
-tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_backtest = st.tabs(
-    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Backtest"]
+tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_backtest, tab_mc = st.tabs(
+    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Backtest", "Monte Carlo"]
 )
 
 # --- Data Tab ---
@@ -154,3 +155,7 @@ with tab_compare:
 # --- Backtest ---
 with tab_backtest:
     render_backtest_tab(returns, params)
+
+# --- Monte Carlo ---
+with tab_mc:
+    render_montecarlo_tab(returns, params)
