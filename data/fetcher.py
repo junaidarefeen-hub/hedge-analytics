@@ -5,8 +5,11 @@ from time import sleep
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+from curl_cffi import requests as curl_requests
 
 from config import CACHE_TTL_SECONDS
+
+_session = curl_requests.Session(verify=False, impersonate="chrome")
 
 NAME_CACHE_TTL = 86400  # 24 hours — company names rarely change
 
@@ -29,6 +32,7 @@ def validate_and_fetch(
         end=end.isoformat(),
         auto_adjust=True,
         progress=False,
+        session=_session,
     )
 
     if raw.empty:
@@ -54,7 +58,7 @@ def _fetch_single_name(ticker: str, retries: int = 2) -> tuple[str, str]:
     """Fetch the display name for a single ticker with retry."""
     for attempt in range(retries + 1):
         try:
-            info = yf.Ticker(ticker).info
+            info = yf.Ticker(ticker, session=_session).info
             name = info.get("longName") or info.get("shortName")
             if name:
                 return ticker, name
