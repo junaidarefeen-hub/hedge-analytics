@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
 import pandas as pd
@@ -5,6 +6,8 @@ import streamlit as st
 import yfinance as yf
 
 from config import CACHE_TTL_SECONDS
+
+NAME_CACHE_TTL = 86400  # 24 hours — company names rarely change
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Fetching price data...")
@@ -46,14 +49,25 @@ def validate_and_fetch(
     return prices, failed
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Looking up ticker names...")
+def _fetch_single_name(ticker: str) -> tuple[str, str]:
+    """Fetch the display name for a single ticker."""
+    try:
+        info = yf.Ticker(ticker).info
+        name = info.get("longName") or info.get("shortName") or ticker
+        return ticker, name
+    except Exception:
+        return ticker, ticker
+
+
+@st.cache_data(ttl=NAME_CACHE_TTL, show_spinner="Looking up ticker names...")
 def fetch_ticker_names(tickers: list[str]) -> dict[str, str]:
-    """Fetch long names for a list of tickers. Returns {ticker: name} dict."""
-    names = {}
-    for t in tickers:
-        try:
-            info = yf.Ticker(t).info
-            names[t] = info.get("longName") or info.get("shortName") or t
-        except Exception:
-            names[t] = t
+    """Fetch long names for a list of tickers in parallel."""
+    if not tickers:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(len(tickers), 8)) as pool:
+        futures = {pool.submit(_fetch_single_name, t): t for t in tickers}
+        names = {}
+        for future in as_completed(futures):
+            ticker, name = future.result()
+            names[ticker] = name
     return names
