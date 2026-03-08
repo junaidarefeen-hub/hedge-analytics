@@ -1,0 +1,12 @@
+{
+    "stocks": {
+        "FAANG+": "AAPL, MSFT, GOOGL, AMZN, META",
+        "Mag 7": "AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA",
+        "Banks": "JPM, BAC, GS, MS, C, WFC"
+    },
+    "factors": {
+        "Broad Market": "SPY, QQQ, IWM, XLF, XLE",
+        "Sector ETFs": "XLF, XLE, XLK, XLV, XLI, XLU",
+        "Fixed Income": "TLT, IEF, SHY, LQD, HYG"
+    }
+}
