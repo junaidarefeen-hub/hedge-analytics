@@ -18,7 +18,7 @@ class TestComputeDrawdowns:
         assert analysis.max_duration == 0
 
     def test_known_drawdown(self):
-        """Known synthetic drawdown should be detected."""
+        """Known synthetic drawdown should be detected with exact depth."""
         # Go up, then down, then recover
         values = [1.0, 1.1, 1.2, 1.0, 0.9, 1.0, 1.1, 1.3]
         cum = pd.Series(values, index=pd.bdate_range("2022-01-03", periods=len(values)))
@@ -26,8 +26,29 @@ class TestComputeDrawdowns:
 
         assert len(analysis.drawdown_periods) >= 1
         worst = analysis.drawdown_periods[0]
-        # Worst drawdown: from peak 1.2 to trough 0.9 = -25%
+        # Peak at 1.2, trough at 0.9 → dd = (0.9 - 1.2) / 1.2 = -0.25
         assert worst.max_drawdown == pytest.approx(-0.25, abs=0.01)
+        assert analysis.max_drawdown == pytest.approx(-0.25, abs=0.01)
+
+    def test_known_drawdown_duration_and_recovery(self):
+        """Verify exact duration and recovery days for a simple drawdown."""
+        # Peak at index 1 (val=1.2), underwater indices 2,3,4 (vals 1.0, 0.9, 1.0),
+        # recovers at index 5 (val=1.2)
+        values = [1.0, 1.2, 1.0, 0.9, 1.0, 1.2, 1.3]
+        cum = pd.Series(values, index=pd.bdate_range("2022-01-03", periods=len(values)))
+        analysis = compute_drawdowns(cum)
+        worst = analysis.drawdown_periods[0]
+        assert worst.duration_days == 3  # indices 2, 3, 4 are underwater
+        assert worst.recovery_days is not None
+
+    def test_avg_drawdown_accuracy(self):
+        """Two distinct drawdowns — avg should be the mean of both depths."""
+        # DD1: peak 1.2, trough 0.96 → -20%. DD2: peak 1.3, trough 1.17 → -10%
+        values = [1.0, 1.2, 0.96, 1.2, 1.3, 1.17, 1.3, 1.4]
+        cum = pd.Series(values, index=pd.bdate_range("2022-01-03", periods=len(values)))
+        analysis = compute_drawdowns(cum)
+        depths = [p.max_drawdown for p in analysis.drawdown_periods]
+        assert analysis.avg_drawdown == pytest.approx(sum(depths) / len(depths), rel=1e-6)
 
     def test_underwater_always_nonpositive(self):
         """Underwater series should always be <= 0."""

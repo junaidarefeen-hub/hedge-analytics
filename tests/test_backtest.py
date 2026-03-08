@@ -112,11 +112,33 @@ class TestTrackingError:
         b = pd.Series(rng.normal(0, 0.01, 200))
         assert _tracking_error(a, b) > 0
 
+    def test_known_value(self):
+        """Hand-calculated: TE = std(diff) * sqrt(252)."""
+        a = pd.Series([0.01, 0.02, -0.01, 0.005])
+        b = pd.Series([0.005, 0.01, -0.005, 0.002])
+        diff = a - b  # [0.005, 0.01, -0.005, 0.003]
+        expected = float(diff.std() * np.sqrt(252))
+        assert _tracking_error(a, b) == pytest.approx(expected, rel=1e-10)
+
 
 class TestInformationRatio:
     def test_identical_series_zero(self):
         daily = pd.Series(np.random.default_rng(1).normal(0, 0.01, 200))
         assert _information_ratio(daily, daily) == pytest.approx(0.0)
+
+    def test_known_value(self):
+        """IR = mean(diff)/std(diff) * sqrt(252)."""
+        a = pd.Series([0.02, 0.03, 0.01, 0.02])
+        b = pd.Series([0.01, 0.01, 0.01, 0.01])
+        diff = a - b
+        expected = float(diff.mean() / diff.std() * np.sqrt(252))
+        assert _information_ratio(a, b) == pytest.approx(expected, rel=1e-10)
+
+    def test_negative_when_hedged_worse(self):
+        """Hedged underperforms unhedged → negative IR."""
+        hedged = pd.Series([-0.01, -0.02, -0.01, -0.01])
+        unhedged = pd.Series([0.01, 0.02, 0.01, 0.01])
+        assert _information_ratio(hedged, unhedged) < 0
 
 
 class TestOmegaRatio:
@@ -129,16 +151,34 @@ class TestOmegaRatio:
         omega = _omega_ratio(daily)
         assert omega > 0
 
+    def test_known_value(self):
+        """Hand-calculated: omega = sum(gains) / sum(losses) at threshold=0."""
+        daily = pd.Series([0.02, -0.01, 0.03, -0.02])
+        # gains = 0.02 + 0.03 = 0.05, losses = 0.01 + 0.02 = 0.03
+        assert _omega_ratio(daily) == pytest.approx(0.05 / 0.03, rel=1e-10)
+
+    def test_all_negative_returns(self):
+        daily = pd.Series([-0.01, -0.02, -0.005])
+        # gains = 0, losses > 0 → omega should be 0
+        assert _omega_ratio(daily) == pytest.approx(0.0)
+
+    def test_custom_threshold(self):
+        """With threshold=0.01, only excess above 0.01 counts as gain."""
+        daily = pd.Series([0.02, 0.005, -0.01])
+        # excess = [0.01, -0.005, -0.02], gains = 0.01, losses = 0.025
+        assert _omega_ratio(daily, threshold=0.01) == pytest.approx(0.01 / 0.025, rel=1e-10)
+
 
 class TestMaxDrawdownDuration:
     def test_monotonic_series_zero(self):
         cum = pd.Series(np.linspace(1.0, 2.0, 100))
         assert _max_drawdown_duration(cum) == 0
 
-    def test_known_drawdown(self):
-        cum = pd.Series([1.0, 1.1, 1.0, 0.9, 1.0, 1.1, 1.2])
-        duration = _max_drawdown_duration(cum)
-        assert duration > 0
+    def test_known_duration(self):
+        """Series: up, down for 3 periods, then recover — duration should be 3."""
+        cum = pd.Series([1.0, 1.1, 1.0, 0.95, 0.98, 1.1, 1.2])
+        # Underwater from index 2-4 (3 periods below peak of 1.1)
+        assert _max_drawdown_duration(cum) == 3
 
 
 class TestDynamicBacktest:

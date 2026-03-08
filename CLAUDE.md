@@ -4,76 +4,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Streamlit app for portfolio hedge analysis: correlations, betas, hedge optimization, and backtesting.
+Streamlit app for portfolio hedge analysis: correlations, betas, hedge optimization, backtesting, drawdowns, and regime detection.
 
 ## Run
 
 ```
 cd ~/projects/hedge-analytics
 python -m streamlit run app.py
+pytest tests/ -v
 ```
 
-Tests: `pytest tests/ -v`. Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, scipy, pandas, numpy).
+Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, scipy, pandas, numpy).
 
 ## Architecture
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
 - `app.py` — Entry point, 10-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest, Monte Carlo, Stress Test, Drawdown, Regime)
-- `config.py` — All defaults and constants (tickers, dates, strategy options, bounds, annualization)
-- `ui/sidebar.py` — Returns a `params` dict consumed by all tabs. Factors double as beta benchmarks.
+- `config.py` — All defaults and constants (tickers, dates, strategies, bounds, intervals, regime/rolling params)
+- `ui/sidebar.py` — Returns `params` dict consumed by all tabs. Includes interval selector and cache clear button.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
 
 ## Data Flow
 
 ```
 Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
-  ├─ Correlation/Beta tabs → matrices + rolling charts + dendrogram (3+ tickers)
-  ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state; optional rolling optimization
-  ├─ Compare tab → compare_strategies() → runs all 4 strategies + backtests → CompareResult
-  ├─ Backtest tab → reads HedgeResult → run_backtest() → BacktestResult; optional dynamic rebalancing
-  ├─ Monte Carlo tab → reads HedgeResult → run_monte_carlo() → MonteCarloResult
-  ├─ Stress Test tab → reads HedgeResult → run_stress_test() → StressTestResult
+  ├─ Correlation tab → heatmap + rolling chart + dendrogram (3+ tickers via scipy linkage)
+  ├─ Beta tab → heatmap + rolling chart
+  ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state; toggle for rolling optimization
+  ├─ Compare tab → compare_strategies() → 4 strategies + backtests → CompareResult
+  ├─ Backtest tab → run_backtest() → BacktestResult; toggle for dynamic rebalancing
+  ├─ Monte Carlo tab → run_monte_carlo() → MonteCarloResult
+  ├─ Stress Test tab → run_stress_test() → StressTestResult
   ├─ Drawdown tab → compute_drawdowns() → DrawdownAnalysis (standalone or hedged vs unhedged)
   └─ Regime tab → detect_regimes() → RegimeResult + regime_hedge_effectiveness()
 ```
 
-**Session state bridge**: The Optimizer (and Compare tab's "Use strategy" buttons) stores `HedgeResult` and a params hash in `st.session_state`. The Backtest tab reads it. Staleness detection compares the stored hash against current sidebar params.
+**Session state bridge**: Optimizer stores `HedgeResult` + params hash in `st.session_state`. Backtest, Monte Carlo, Stress, Drawdown (hedged mode), and Regime (hedge effectiveness) read it. Staleness detection via `_params_hash()`.
 
-## Strategy Compare (`analytics/compare.py`)
+## Key Modules
 
-Runs all 4 strategies for a given target, backtests each, and ranks by composite score across: Vol Reduction, Total Return, Ann. Return, Ann. Volatility, Sharpe, Sortino, Max Drawdown, Calmar. Per-metric rank (1=best) averaged into a composite rank. "Use strategy" buttons load the selected HedgeResult/BacktestResult into session_state for the Optimizer/Backtest tabs.
+### `analytics/optimization.py` — 4 strategies, weights sum to -1 (short) or +1 (long)
+- Minimum Variance (SLSQP), Beta-Neutral (SLSQP + soft penalty fallback), CVaR (Rockafellar-Uryasev), Risk Parity (inverse-vol)
+- `_multivariate_beta_matrix()`: single aligned sample OLS for beta additivity
+- `_apply_min_names()`: caps weight to 1/N to force diversification
 
-## Hedge Optimizer (`analytics/optimization.py`)
+### `analytics/backtest.py` — Static + dynamic backtesting
+- 11 metrics: Total/Ann. Return, Ann. Vol, Sharpe, Sortino, Max DD, Calmar, Omega, Max DD Duration, Tracking Error, Information Ratio
+- Tracking Error/Information Ratio: hedged-only (0 for unhedged)
+- `run_dynamic_backtest()`: periodic re-optimization via `_rebalance_dates()` (weekly/monthly/quarterly), produces 3-way comparison (unhedged/static/dynamic)
 
-4 strategies, all constrained so weights sum to -1 (short-only) or +1 (long-only):
+### `analytics/rolling_optimization.py` — Walk-forward optimization
+- Slides window at `step` intervals, calls `optimize_hedge()` at each point
+- Outputs weight evolution, vol history, turnover, weight stability
 
-| Strategy | Method | Key detail |
-|----------|--------|------------|
-| Minimum Variance | scipy SLSQP | `Var(r_target + w @ r_hedges)` objective |
-| Beta-Neutral | scipy SLSQP | Min variance + per-factor `beta=0` equality constraints. Falls back to soft penalty (1e6) if infeasible, keeping sum as hard constraint |
-| Tail Risk (CVaR) | scipy SLSQP | Rockafellar-Uryasev linearization with VaR auxiliary variable |
-| Risk Parity | Closed-form | Inverse-volatility weighting, no optimizer |
+### `analytics/drawdown.py` — Drawdown period detection
+- `compute_drawdowns()`: identifies contiguous underwater spans from cumulative series
+- `DrawdownPeriod`: start (peak), trough, end (recovery or None), depth, duration, recovery days
 
-**Multivariate betas**: `_multivariate_beta_matrix()` regresses all tickers on all factors simultaneously using a single `dropna`-aligned sample. This ensures beta additivity and handles multicollinearity. Used both in Beta-Neutral constraints and in the results display.
+### `analytics/regime.py` — Volatility-based regime detection
+- Two methods: `quantile` (percentile thresholds) and `kmeans` (scipy kmeans2, sorted so regime 0 = lowest vol)
+- `regime_hedge_effectiveness()`: per-regime hedged/unhedged vol, vol reduction, correlation
 
-**Min hedge names**: `_apply_min_names()` caps max weight per instrument to `1/N`, forcing at least N instruments to be active.
+### `analytics/correlation.py` — Includes hierarchical clustering
+- `correlation_clustering()`: distance = `1 - |corr|`, scipy linkage, rendered as plotly dendrogram in `ui/matrices.py`
 
-**Over-determination guard**: Beta constraints limited to `n_hedges - 1` to avoid infeasibility from too many equality constraints.
-
-## Monte Carlo (`analytics/montecarlo.py`)
-
-Simulates forward-looking portfolio paths using multivariate normal distribution fitted to historical mean returns and covariance matrix. Generates N paths over a user-chosen horizon for both hedged and unhedged portfolios. Outputs: VaR/CVaR at configurable confidence levels, probability of loss exceeding thresholds, distribution of final values, percentile bands over time. Covariance matrix gets a PSD correction if needed (`cov -= 1.1 * min_eig * I`). Hedged formula matches backtest: `target + weights @ hedges`.
-
-## Stress Test (`analytics/stress.py`)
-
-Two modes: **Historical** replays actual crisis periods (2008 GFC, 2020 COVID, 2022 rate hikes, etc.) using returns data from those dates. **Custom** applies user-defined percentage shocks per instrument. Both compute hedged vs unhedged P&L using the same formula as backtest (`target + weights @ hedges`). Historical scenarios require the sidebar date range to cover the scenario period; unavailable scenarios are skipped with a warning. Defined in `HISTORICAL_SCENARIOS` list in `config.py`.
+### `data/fetcher.py` — yfinance with interval support
+- `validate_interval_date_range()`: enforces yfinance limits (1m→7d, 5m/15m→60d, 1h→730d)
+- `clear_cache()`: clears both price and name caches
 
 ## Key Design Decisions
 
-- Weights displayed as absolute values with a Side column (Short/Long); zero-weight instruments filtered out
-- Correlation metric = target vs weighted hedge basket (using `abs(weights)`), not hedged vs unhedged portfolio
-- Betas shown only against factor/index tickers, not other stocks
-- Backtest metrics: returns/vol/drawdown formatted as percentages, ratios (Sharpe/Sortino/Calmar) as decimals
-- All charts use `PLOTLY_LAYOUT` from `ui/style.py` as base, then override per-chart settings
+- Weights displayed as absolute values with Side column (Short/Long); zero-weight filtered out
+- Correlation = target vs weighted hedge basket (using `abs(weights)`)
+- Backtest metrics: returns/vol/drawdown/TE as percentages; ratios (Sharpe/Sortino/Calmar/Omega/IR) as decimals; DD duration as integer days
+- All charts use `PLOTLY_LAYOUT` from `ui/style.py` as base
 - Theme: blue primary (#2563eb), configured in `.streamlit/config.toml`
+- Rolling optimization and dynamic rebalancing use radio toggles (static vs dynamic) within their respective tabs
+- Late import of `optimize_hedge` in `run_dynamic_backtest()` to avoid circular dependency (backtest ↔ optimization)
