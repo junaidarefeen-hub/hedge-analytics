@@ -110,15 +110,20 @@ with tab_corr:
         st.plotly_chart(correlation_heatmap(corr), use_container_width=True)
 
     with col_right:
-        ta, tb = params["ticker_a"], params["ticker_b"]
+        all_t = params["all_tickers"]
+        c1, c2 = st.columns(2)
+        with c1:
+            ta = st.selectbox("Ticker A", options=all_t, index=0, key="corr_ticker_a")
+        with c2:
+            tb = st.selectbox("Ticker B", options=all_t, index=min(1, len(all_t) - 1), key="corr_ticker_b")
+        if ta == tb:
+            st.caption("Same ticker selected — correlation = 1.0")
         if ta in returns.columns and tb in returns.columns:
             rc = rolling_correlation(returns, ta, tb, params["window"])
             st.plotly_chart(
                 rolling_correlation_chart(rc, ta, tb, params["window"]),
                 use_container_width=True,
             )
-        else:
-            st.info("Select valid tickers in the sidebar for rolling correlation.")
 
 # --- Beta Tab ---
 with tab_beta:
@@ -133,16 +138,19 @@ with tab_beta:
             st.plotly_chart(beta_heatmap(bm), use_container_width=True)
 
         with col_right:
-            bt = params["beta_ticker"]
-            bb = params["beta_benchmark"]
+            all_t = params["all_tickers"]
+            b1, b2 = st.columns(2)
+            with b1:
+                bb = st.selectbox("Benchmark", options=benchmarks, index=0, key="beta_benchmark")
+            with b2:
+                non_bench = [t for t in all_t if t != bb]
+                bt = st.selectbox("Ticker", options=non_bench or all_t, index=0, key="beta_ticker")
             if bt in returns.columns and bb in returns.columns:
                 rb = rolling_beta(returns, bt, bb, params["window"])
                 st.plotly_chart(
                     rolling_beta_chart(rb, bt, bb, params["window"]),
                     use_container_width=True,
                 )
-            else:
-                st.info("Select valid ticker/benchmark for rolling beta.")
 
 # --- Hedge Optimizer ---
 with tab_optim:

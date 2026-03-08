@@ -80,36 +80,6 @@ def render_sidebar() -> dict | None:
             horizontal=True,
         )
 
-        st.divider()
-
-        # Pair selection for rolling charts
-        st.subheader("Pair selection")
-        ticker_a = st.selectbox("Ticker A", options=all_tickers, index=0)
-        ticker_b = st.selectbox(
-            "Ticker B",
-            options=all_tickers,
-            index=min(1, len(all_tickers) - 1),
-        )
-
-        if ticker_a == ticker_b:
-            st.info("Same ticker selected — correlation = 1.0, beta = 1.0.")
-
-        # Benchmark for rolling beta
-        beta_benchmark = None
-        beta_ticker = stock_tickers[0] if stock_tickers else all_tickers[0]
-        if factor_tickers:
-            beta_benchmark = st.selectbox(
-                "Rolling beta benchmark",
-                options=factor_tickers,
-                index=0,
-            )
-            non_benchmark = [t for t in all_tickers if t != beta_benchmark]
-            beta_ticker = st.selectbox(
-                "Rolling beta ticker",
-                options=non_benchmark or all_tickers,
-                index=0,
-            )
-
     return {
         "stock_tickers": stock_tickers,
         "factor_tickers": factor_tickers,
@@ -119,8 +89,4 @@ def render_sidebar() -> dict | None:
         "end_date": end_date,
         "window": window,
         "return_method": return_method,
-        "ticker_a": ticker_a,
-        "ticker_b": ticker_b,
-        "beta_benchmark": beta_benchmark,
-        "beta_ticker": beta_ticker,
     }
