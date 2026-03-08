@@ -22,7 +22,7 @@ from config import (
     ROLLING_OPT_WINDOW,
     STRATEGY_OPTIONS,
 )
-from ui.style import PLOTLY_LAYOUT
+from ui.style import PLOTLY_LAYOUT, add_metric_descriptions
 
 
 def _params_hash(params: dict) -> str:
@@ -456,7 +456,7 @@ def _render_rolling_optimization(returns, params, hedge_result):
             else (f"{int(ro_result.metrics.loc[idx, c])}" if idx in int_rows
                   else f"{ro_result.metrics.loc[idx, c]:.2f}")
         )
-    st.dataframe(fmt, use_container_width=True)
+    st.dataframe(add_metric_descriptions(fmt), use_container_width=True)
 
     # Weight stability table
     st.caption("Weight Stability (standard deviation over time)")

@@ -21,10 +21,11 @@ def _price_chart_with_regimes(
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=cum.index, y=cum.values, mode="lines", name=ticker,
-        line=dict(width=2, color="#0f172a"),
+        line=dict(width=2.5, color="#0f172a"),
+        hovertemplate="%{x|%b %d, %Y}<br>%{y:.4f}<extra></extra>",
     ))
 
-    # Add regime background bands
+    # Add regime background bands (no per-band labels to avoid clutter)
     regime_series = regime_result.regime_series
     labels = regime_result.labels
     prev_regime = None
@@ -38,9 +39,6 @@ def _price_chart_with_regimes(
                     x0=band_start, x1=date,
                     fillcolor=color, opacity=0.15,
                     line_width=0,
-                    annotation_text=labels.get(prev_regime, ""),
-                    annotation_position="top left",
-                    annotation_font_size=9,
                 )
             band_start = date
             prev_regime = regime
@@ -54,10 +52,23 @@ def _price_chart_with_regimes(
             line_width=0,
         )
 
+    # Add invisible traces for the legend to explain regime colors
+    unique_regimes = sorted(regime_series.unique())
+    for regime_id in unique_regimes:
+        color = _REGIME_COLORS[regime_id % len(_REGIME_COLORS)]
+        label = labels.get(regime_id, f"Regime {regime_id}")
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=12, color=color, symbol="square"),
+            name=label,
+            showlegend=True,
+        ))
+
     fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
         title=f"Cumulative Returns with Regime Overlay: {ticker}",
         height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
 

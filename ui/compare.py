@@ -18,7 +18,7 @@ from config import (
     DEFAULT_WEIGHT_BOUNDS,
 )
 from ui.optimizer import HEDGE_UNIVERSE_OPTIONS, _params_hash
-from ui.style import PLOTLY_LAYOUT
+from ui.style import PLOTLY_LAYOUT, add_metric_descriptions
 
 
 def _metrics_table(result: CompareResult) -> pd.DataFrame:
@@ -38,24 +38,23 @@ def _radar_chart(result: CompareResult) -> go.Figure:
     strategy_cols = [c.strategy for c in result.comparisons]
     metrics_df = result.metrics_df[strategy_cols]
 
+    # Metrics where lower is better (Max Drawdown is negative, so higher = less severe = better; it uses the default path)
+    _LOWER_BETTER = {"Ann. Volatility", "Tracking Error"}
+
     # Normalize: for each metric, scale so 1 = best across strategies
     normalized = metrics_df.copy()
     for metric in normalized.index:
-        vals = normalized.loc[metric]
-        if metric == "Ann. Volatility":
-            # Lower is better — invert
-            best, worst = vals.min(), vals.max()
-        else:
-            # Higher is better
-            best, worst = vals.max(), vals.min()
+        vals = normalized.loc[metric].astype(float)
+        vmin, vmax = vals.min(), vals.max()
 
-        rng = best - worst
-        if rng == 0:
+        if vmax == vmin:
             normalized.loc[metric] = 1.0
-        elif metric == "Ann. Volatility":
-            normalized.loc[metric] = (worst - vals) / rng
+        elif metric in _LOWER_BETTER:
+            # Lower is better: lowest value → 1.0, highest → 0.0
+            normalized.loc[metric] = (vmax - vals) / (vmax - vmin)
         else:
-            normalized.loc[metric] = (vals - worst) / rng
+            # Higher is better: highest value → 1.0, lowest → 0.0
+            normalized.loc[metric] = (vals - vmin) / (vmax - vmin)
 
     categories = list(normalized.index)
     fig = go.Figure()
@@ -279,7 +278,7 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
         # Metrics table
         st.caption("Performance Metrics (Hedged portfolio for each strategy)")
         formatted = _metrics_table(result)
-        st.dataframe(formatted, use_container_width=True)
+        st.dataframe(add_metric_descriptions(formatted), use_container_width=True)
 
         # Ranking table
         rank_df = result.ranking_df.copy()

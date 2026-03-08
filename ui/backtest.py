@@ -15,7 +15,7 @@ from config import (
     REBALANCE_FREQUENCIES,
 )
 from ui.optimizer import _params_hash
-from ui.style import PLOTLY_LAYOUT
+from ui.style import PLOTLY_LAYOUT, add_metric_descriptions
 
 
 def _cumulative_chart(result: BacktestResult) -> go.Figure:
@@ -157,7 +157,7 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
             else (f"{int(bt_result.metrics.loc[idx, c])}" if idx in int_rows
                   else f"{bt_result.metrics.loc[idx, c]:.2f}")
         )
-    st.dataframe(fmt_metrics, use_container_width=True)
+    st.dataframe(add_metric_descriptions(fmt_metrics), use_container_width=True)
 
     # --- Dynamic Rebalancing Backtest ---
     st.divider()
@@ -282,4 +282,4 @@ def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
             else (f"{int(dyn_result.metrics.loc[idx, c])}" if idx in int_rows
                   else f"{dyn_result.metrics.loc[idx, c]:.2f}")
         )
-    st.dataframe(fmt, use_container_width=True)
+    st.dataframe(add_metric_descriptions(fmt), use_container_width=True)

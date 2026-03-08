@@ -35,6 +35,46 @@ PLOTLY_LAYOUT = dict(
 )
 
 
+METRIC_DESCRIPTIONS = {
+    # Backtest / compare metrics
+    "Total Return": "Cumulative return over the full period: (final value / initial value) - 1.",
+    "Ann. Return": "Annualized compound return, scaled to a 252-day trading year.",
+    "Ann. Volatility": "Annualized standard deviation of daily returns (daily std x sqrt(252)).",
+    "Sharpe Ratio": "Risk-adjusted return: (mean excess return over risk-free) / volatility, annualized.",
+    "Sortino Ratio": "Like Sharpe but only penalizes downside volatility (negative returns).",
+    "Max Drawdown": "Largest peak-to-trough decline as a percentage of the peak value.",
+    "Calmar Ratio": "Annualized return divided by the absolute value of max drawdown.",
+    "Omega Ratio": "Ratio of cumulative gains to cumulative losses relative to a zero threshold. >1 means more gains than losses.",
+    "Max DD Duration (days)": "Longest period (in trading days) spent below a previous high-water mark.",
+    "Tracking Error": "Annualized std of return differences between hedged and unhedged portfolios. Measures hedge deviation.",
+    "Information Ratio": "Annualized mean return difference / tracking error. Measures excess return per unit of deviation from the unhedged portfolio.",
+    "Vol Reduction": "Percentage reduction in annualized volatility from hedging: 1 - (hedged vol / unhedged vol).",
+    # Monte Carlo metrics
+    "Mean Return": "Average simulated return across all paths at the end of the horizon.",
+    "Median Return": "Middle simulated return (50th percentile) — less affected by outliers than the mean.",
+    "Std Dev": "Standard deviation of simulated final returns across all paths.",
+    "Best Case": "Highest simulated return across all paths.",
+    "Worst Case": "Lowest simulated return across all paths.",
+    "VaR 90%": "Value at Risk at 90% confidence: loss exceeded in only 10% of simulations.",
+    "VaR 95%": "Value at Risk at 95% confidence: loss exceeded in only 5% of simulations.",
+    "VaR 99%": "Value at Risk at 99% confidence: loss exceeded in only 1% of simulations.",
+    "CVaR 90%": "Conditional VaR (Expected Shortfall) at 90%: average loss in the worst 10% of simulations.",
+    "CVaR 95%": "Conditional VaR (Expected Shortfall) at 95%: average loss in the worst 5% of simulations.",
+    "CVaR 99%": "Conditional VaR (Expected Shortfall) at 99%: average loss in the worst 1% of simulations.",
+    "P(loss > 5%)": "Probability of losing more than 5% of portfolio value.",
+    "P(loss > 10%)": "Probability of losing more than 10% of portfolio value.",
+    "P(loss > 20%)": "Probability of losing more than 20% of portfolio value.",
+}
+
+
+def add_metric_descriptions(df: "pd.DataFrame") -> "pd.DataFrame":
+    """Add a 'Description' column to a metrics DataFrame based on its index."""
+    import pandas as pd
+    out = df.copy()
+    out.insert(0, "Description", [METRIC_DESCRIPTIONS.get(idx, "") for idx in out.index])
+    return out
+
+
 def inject_css():
     st.markdown(
         """
