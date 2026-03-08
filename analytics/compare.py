@@ -33,7 +33,11 @@ class CompareResult:
 # Metrics where higher = better
 _HIGHER_BETTER = {"Total Return", "Ann. Return", "Sharpe Ratio", "Sortino Ratio", "Calmar Ratio", "Vol Reduction"}
 # Metrics where higher = better (Max Drawdown is negative, so less negative = higher = better)
-_ALL_METRICS = ["Vol Reduction", "Total Return", "Ann. Return", "Ann. Volatility", "Sharpe Ratio", "Sortino Ratio", "Max Drawdown", "Calmar Ratio"]
+_ALL_METRICS = [
+    "Vol Reduction", "Total Return", "Ann. Return", "Ann. Volatility",
+    "Sharpe Ratio", "Sortino Ratio", "Max Drawdown", "Calmar Ratio",
+    "Omega Ratio", "Tracking Error", "Information Ratio",
+]
 
 
 def compare_strategies(
@@ -119,7 +123,7 @@ def compare_strategies(
         values = {s: metrics_df.loc[metric, s] for s in strategy_cols}
         # For all metrics: higher is better (Max Drawdown is negative, so -0.05 > -0.20)
         # For Ann. Volatility: lower is better
-        ascending = metric == "Ann. Volatility"
+        ascending = metric in ("Ann. Volatility", "Tracking Error")
         sorted_strats = sorted(values, key=lambda s: values[s], reverse=not ascending)
         for rank_pos, s in enumerate(sorted_strats, 1):
             rank_data[s][metric] = rank_pos

@@ -5,10 +5,12 @@ st.set_page_config(page_title="Hedge Analytics", layout="wide")
 import pandas as pd
 
 from analytics.beta import beta_matrix, rolling_beta
-from analytics.correlation import correlation_matrix, rolling_correlation
+from analytics.correlation import correlation_clustering, correlation_matrix, rolling_correlation
 from analytics.returns import compute_returns
 from data.fetcher import fetch_ticker_names, validate_and_fetch
-from ui.matrices import beta_heatmap, correlation_heatmap
+from ui.drawdown import render_drawdown_tab
+from ui.matrices import beta_heatmap, correlation_dendrogram, correlation_heatmap
+from ui.regime import render_regime_tab
 from ui.sidebar import render_sidebar
 from ui.style import inject_css
 from ui.backtest import render_backtest_tab
@@ -28,11 +30,12 @@ if params is None:
     st.stop()
 
 # Fetch data for both groups
+interval = params.get("interval", "1d")
 stock_prices, stock_failed = validate_and_fetch(
-    params["stock_tickers"], params["start_date"], params["end_date"]
+    params["stock_tickers"], params["start_date"], params["end_date"], interval=interval,
 )
 factor_prices, factor_failed = validate_and_fetch(
-    params["factor_tickers"], params["start_date"], params["end_date"]
+    params["factor_tickers"], params["start_date"], params["end_date"], interval=interval,
 )
 
 all_failed = stock_failed + factor_failed
@@ -68,8 +71,8 @@ if sufficiency_warn:
     st.warning(sufficiency_warn)
 
 # Tabs
-tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_backtest, tab_mc, tab_stress = st.tabs(
-    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Backtest", "Monte Carlo", "Stress Test"]
+tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime = st.tabs(
+    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime"]
 )
 
 # --- Data Tab ---
@@ -126,6 +129,14 @@ with tab_corr:
                 use_container_width=True,
             )
 
+    # Correlation clustering dendrogram (3+ tickers)
+    if len(corr) >= 3:
+        try:
+            clustering = correlation_clustering(corr)
+            st.plotly_chart(correlation_dendrogram(clustering), use_container_width=True)
+        except Exception:
+            pass
+
 # --- Beta Tab ---
 with tab_beta:
     benchmarks = [b for b in params["benchmarks"] if b in returns.columns]
@@ -172,3 +183,11 @@ with tab_mc:
 # --- Stress Test ---
 with tab_stress:
     render_stress_tab(returns, params)
+
+# --- Drawdown ---
+with tab_dd:
+    render_drawdown_tab(returns, params)
+
+# --- Regime ---
+with tab_regime:
+    render_regime_tab(returns, params)

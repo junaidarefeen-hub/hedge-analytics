@@ -6,8 +6,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from analytics.backtest import BacktestResult, run_backtest
-from config import DEFAULT_RISK_FREE_RATE, DEFAULT_ROLLING_VOL_WINDOW
+from analytics.backtest import BacktestResult, DynamicBacktestResult, run_backtest, run_dynamic_backtest
+from config import (
+    DEFAULT_LOOKBACK_WINDOW,
+    DEFAULT_REBALANCE_FREQUENCY,
+    DEFAULT_RISK_FREE_RATE,
+    DEFAULT_ROLLING_VOL_WINDOW,
+    REBALANCE_FREQUENCIES,
+)
 from ui.optimizer import _params_hash
 from ui.style import PLOTLY_LAYOUT
 
@@ -132,12 +138,136 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
 
     # Metrics table
     st.subheader("Performance Metrics")
-    pct_rows = {"Total Return", "Ann. Return", "Ann. Volatility", "Max Drawdown"}
+    pct_rows = {"Total Return", "Ann. Return", "Ann. Volatility", "Max Drawdown", "Tracking Error"}
+    int_rows = {"Max DD Duration (days)"}
     fmt_metrics = bt_result.metrics.copy()
     for col in fmt_metrics.columns:
         fmt_metrics[col] = fmt_metrics.index.map(
             lambda idx, c=col: f"{bt_result.metrics.loc[idx, c]:.2%}"
             if idx in pct_rows
-            else f"{bt_result.metrics.loc[idx, c]:.2f}"
+            else (f"{int(bt_result.metrics.loc[idx, c])}" if idx in int_rows
+                  else f"{bt_result.metrics.loc[idx, c]:.2f}")
         )
     st.dataframe(fmt_metrics, use_container_width=True)
+
+    # --- Dynamic Rebalancing Backtest ---
+    st.divider()
+    mode = st.radio(
+        "Backtest mode",
+        options=["Static Backtest", "Dynamic Rebalancing Backtest"],
+        index=0,
+        horizontal=True,
+        key="bt_mode",
+    )
+
+    if mode == "Dynamic Rebalancing Backtest":
+        _render_dynamic_backtest(returns, params, hedge_result, bt_result)
+
+
+def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
+    """Render dynamic rebalancing backtest controls and results."""
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        rebal_freq = st.selectbox(
+            "Rebalance frequency",
+            options=REBALANCE_FREQUENCIES,
+            index=REBALANCE_FREQUENCIES.index(DEFAULT_REBALANCE_FREQUENCY),
+            key="dyn_freq",
+        )
+    with dc2:
+        lookback = st.number_input(
+            "Lookback window (days)",
+            min_value=30,
+            max_value=504,
+            value=DEFAULT_LOOKBACK_WINDOW,
+            step=10,
+            key="dyn_lookback",
+        )
+
+    run_dyn = st.button("Run Dynamic Backtest", type="primary", key="dyn_run")
+
+    if run_dyn:
+        progress = st.progress(0, text="Running dynamic rebalancing...")
+        try:
+            dyn_result = run_dynamic_backtest(
+                returns=returns,
+                target=hedge_result.target_ticker,
+                hedges=hedge_result.hedge_instruments,
+                static_weights=hedge_result.weights,
+                strategy=hedge_result.strategy,
+                bounds=(-1.0, 0.0) if hedge_result.weights[0] <= 0 else (0.0, 1.0),
+                rebalance_freq=rebal_freq,
+                lookback_window=lookback,
+                rolling_window=st.session_state.get("bt_roll_window", DEFAULT_ROLLING_VOL_WINDOW),
+                risk_free=st.session_state.get("bt_rf", DEFAULT_RISK_FREE_RATE),
+                factors=list(hedge_result.portfolio_betas.keys()) if hedge_result.portfolio_betas else None,
+                confidence=hedge_result.confidence_level or 0.95,
+                min_names=0,
+                notional=hedge_result.target_notional,
+                progress_callback=lambda p: progress.progress(p, text=f"Rebalancing... {p:.0%}"),
+            )
+            st.session_state["dynamic_bt_result"] = dyn_result
+            progress.empty()
+        except Exception as e:
+            progress.empty()
+            st.error(f"Dynamic backtest failed: {e}")
+            return
+
+    dyn_result: DynamicBacktestResult | None = st.session_state.get("dynamic_bt_result")
+    if dyn_result is None:
+        st.info("Configure parameters and click **Run Dynamic Backtest**.")
+        return
+
+    # 3-line cumulative return chart
+    fig_cum = go.Figure()
+    for name, series, color in [
+        ("Unhedged", dyn_result.cumulative_unhedged, "#2563eb"),
+        ("Static Hedge", dyn_result.cumulative_static, "#16a34a"),
+        ("Dynamic Hedge", dyn_result.cumulative_dynamic, "#dc2626"),
+    ]:
+        fig_cum.add_trace(go.Scatter(
+            x=series.index, y=series.values, mode="lines", name=name,
+            line=dict(width=2, color=color),
+        ))
+    fig_cum.update_layout(**PLOTLY_LAYOUT)
+    fig_cum.update_layout(title="Cumulative Returns: Unhedged vs Static vs Dynamic", height=400)
+    st.plotly_chart(fig_cum, use_container_width=True)
+
+    # Weight evolution
+    fig_wt = go.Figure()
+    for col in dyn_result.weight_history.columns:
+        fig_wt.add_trace(go.Scatter(
+            x=dyn_result.weight_history.index,
+            y=dyn_result.weight_history[col].values,
+            mode="lines",
+            name=col,
+            stackgroup="one",
+        ))
+    fig_wt.update_layout(**PLOTLY_LAYOUT)
+    fig_wt.update_layout(title="Weight Evolution Over Time", height=350)
+    st.plotly_chart(fig_wt, use_container_width=True)
+
+    # Turnover bars
+    if len(dyn_result.turnover) > 0:
+        fig_to = go.Figure(data=go.Bar(
+            x=dyn_result.turnover.index,
+            y=dyn_result.turnover.values,
+            marker_color="#7c3aed",
+        ))
+        fig_to.update_layout(**PLOTLY_LAYOUT)
+        fig_to.update_layout(title="Turnover at Rebalance Dates", height=300, yaxis_title="Turnover")
+        st.plotly_chart(fig_to, use_container_width=True)
+
+    # 3-column metrics table
+    st.subheader("Dynamic Backtest Metrics")
+    pct_rows = {"Total Return", "Ann. Return", "Ann. Volatility", "Max Drawdown", "Tracking Error"}
+    int_rows = {"Max DD Duration (days)"}
+    fmt = dyn_result.metrics.copy()
+    for col in fmt.columns:
+        fmt[col] = fmt.index.map(
+            lambda idx, c=col: f"{dyn_result.metrics.loc[idx, c]:.2%}"
+            if idx in pct_rows
+            else (f"{int(dyn_result.metrics.loc[idx, c])}" if idx in int_rows
+                  else f"{dyn_result.metrics.loc[idx, c]:.2f}")
+        )
+    st.dataframe(fmt, use_container_width=True)

@@ -7,16 +7,28 @@ import streamlit as st
 import yfinance as yf
 from curl_cffi import requests as curl_requests
 
-from config import CACHE_TTL_SECONDS
+from config import CACHE_TTL_SECONDS, INTRADAY_MAX_DAYS
 
 _session = curl_requests.Session(verify=False, impersonate="chrome")
 
 NAME_CACHE_TTL = 86400  # 24 hours — company names rarely change
 
 
+def validate_interval_date_range(interval: str, start: date, end: date) -> str | None:
+    """Validate that the date range is within yfinance limits for the given interval.
+
+    Returns an error message string if invalid, else None.
+    """
+    max_days = INTRADAY_MAX_DAYS.get(interval, 100000)
+    actual_days = (end - start).days
+    if actual_days > max_days:
+        return f"Interval '{interval}' supports at most {max_days} days, but date range spans {actual_days} days."
+    return None
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Fetching price data...")
 def validate_and_fetch(
-    tickers: list[str], start: date, end: date
+    tickers: list[str], start: date, end: date, interval: str = "1d",
 ) -> tuple[pd.DataFrame, list[str]]:
     """Fetch adjusted close prices from yfinance.
 
@@ -30,6 +42,7 @@ def validate_and_fetch(
         tickers,
         start=start.isoformat(),
         end=end.isoformat(),
+        interval=interval,
         auto_adjust=True,
         progress=False,
         session=_session,
@@ -81,3 +94,9 @@ def fetch_ticker_names(tickers: list[str]) -> dict[str, str]:
             ticker, name = future.result()
             names[ticker] = name
     return names
+
+
+def clear_cache():
+    """Clear all cached data (prices + ticker names)."""
+    validate_and_fetch.clear()
+    fetch_ticker_names.clear()

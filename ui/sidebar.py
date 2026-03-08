@@ -7,9 +7,11 @@ from config import (
     DEFAULT_ROLLING_WINDOW,
     DEFAULT_START_DATE,
     DEFAULT_STOCK_TICKERS,
+    INTERVAL_OPTIONS,
     RETURN_METHODS,
     ROLLING_WINDOW_OPTIONS,
 )
+from data.fetcher import clear_cache, validate_interval_date_range
 from utils.validation import parse_tickers, validate_date_range
 
 
@@ -80,6 +82,27 @@ def render_sidebar() -> dict | None:
             horizontal=True,
         )
 
+        # Data interval
+        interval = st.selectbox(
+            "Data interval",
+            options=INTERVAL_OPTIONS,
+            index=0,
+            key="data_interval",
+            help="Data frequency. Intraday intervals have limited date range support.",
+        )
+
+        # Validate interval vs date range
+        interval_err = validate_interval_date_range(interval, start_date, end_date)
+        if interval_err:
+            st.warning(interval_err)
+
+        st.divider()
+
+        # Cache controls
+        if st.button("Clear data cache", key="clear_cache"):
+            clear_cache()
+            st.success("Cache cleared. Data will be re-fetched on next run.")
+
     return {
         "stock_tickers": stock_tickers,
         "factor_tickers": factor_tickers,
@@ -89,4 +112,5 @@ def render_sidebar() -> dict | None:
         "end_date": end_date,
         "window": window,
         "return_method": return_method,
+        "interval": interval,
     }

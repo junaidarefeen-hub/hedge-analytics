@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from scipy.cluster.hierarchy import dendrogram
 
 from ui.style import PLOTLY_LAYOUT
 
@@ -100,4 +101,38 @@ def beta_heatmap(betas: pd.DataFrame) -> go.Figure:
     )
     # Dark ranges: low end (norm 0–0.15) and high end (norm 0.85–1.0)
     _add_annotations(fig, betas, [(0, 0.15), (0.85, 1.0)], zmin, zmax)
+    return fig
+
+
+def correlation_dendrogram(clustering_result: dict) -> go.Figure:
+    """Render a dendrogram from correlation clustering using Plotly."""
+    Z = clustering_result["linkage_matrix"]
+    labels = clustering_result["labels"]
+
+    # Use scipy dendrogram to get coordinates (no_plot=True)
+    ddata = dendrogram(Z, labels=labels, no_plot=True)
+
+    fig = go.Figure()
+    for xs, ys in zip(ddata["icoord"], ddata["dcoord"]):
+        fig.add_trace(go.Scatter(
+            x=xs,
+            y=ys,
+            mode="lines",
+            line=dict(color="#2563eb", width=1.5),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+
+    fig.update_layout(**PLOTLY_LAYOUT)
+    fig.update_layout(
+        title="Correlation Dendrogram (distance = 1 - |corr|)",
+        xaxis=dict(
+            tickvals=list(range(5, 10 * len(labels), 10)),
+            ticktext=ddata["ivl"],
+            tickangle=-45,
+        ),
+        yaxis_title="Distance",
+        height=380,
+        showlegend=False,
+    )
     return fig

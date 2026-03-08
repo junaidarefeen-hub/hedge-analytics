@@ -11,12 +11,15 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analytics.optimization import HedgeResult, optimize_hedge
+from analytics.rolling_optimization import RollingOptResult, rolling_optimize
 from config import (
     DEFAULT_CVAR_CONFIDENCE,
     DEFAULT_MIN_HEDGE_NAMES,
     DEFAULT_NOTIONAL,
     DEFAULT_STRATEGY,
     DEFAULT_WEIGHT_BOUNDS,
+    ROLLING_OPT_STEP,
+    ROLLING_OPT_WINDOW,
     STRATEGY_OPTIONS,
 )
 from ui.style import PLOTLY_LAYOUT
@@ -302,3 +305,112 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
                 _rolling_corr_chart(result, params["window"]),
                 use_container_width=True,
             )
+
+        # --- Rolling Optimization Section ---
+        st.divider()
+        opt_mode = st.radio(
+            "Optimization mode",
+            options=["Static Optimization", "Rolling Optimization (Walk-Forward)"],
+            index=0,
+            horizontal=True,
+            key="opt_mode",
+        )
+
+        if opt_mode == "Rolling Optimization (Walk-Forward)":
+            _render_rolling_optimization(returns, params, result)
+
+
+def _render_rolling_optimization(returns, params, hedge_result):
+    """Render rolling optimization controls and results."""
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        ro_window = st.number_input(
+            "Rolling window (days)", min_value=30, max_value=504,
+            value=ROLLING_OPT_WINDOW, step=10, key="ro_window",
+        )
+    with rc2:
+        ro_step = st.number_input(
+            "Step (days)", min_value=5, max_value=120,
+            value=ROLLING_OPT_STEP, step=5, key="ro_step",
+        )
+
+    run_ro = st.button("Run Rolling Optimization", type="primary", key="ro_run")
+
+    if run_ro:
+        progress = st.progress(0, text="Running walk-forward optimization...")
+        try:
+            ro_result = rolling_optimize(
+                returns=returns,
+                target=hedge_result.target_ticker,
+                hedge_instruments=hedge_result.hedge_instruments,
+                strategy=hedge_result.strategy,
+                bounds=(-1.0, 0.0) if hedge_result.weights[0] <= 0 else (0.0, 1.0),
+                window=ro_window,
+                step=ro_step,
+                factors=list(hedge_result.portfolio_betas.keys()) if hedge_result.portfolio_betas else None,
+                confidence=hedge_result.confidence_level or 0.95,
+                min_names=0,
+                notional=hedge_result.target_notional,
+                rolling_window=params["window"],
+                progress_callback=lambda p: progress.progress(p, text=f"Optimizing... {p:.0%}"),
+            )
+            st.session_state["rolling_opt_result"] = ro_result
+            progress.empty()
+        except Exception as e:
+            progress.empty()
+            st.error(f"Rolling optimization failed: {e}")
+            return
+
+    ro_result: RollingOptResult | None = st.session_state.get("rolling_opt_result")
+    if ro_result is None:
+        st.info("Set parameters and click **Run Rolling Optimization**.")
+        return
+
+    # Weight evolution chart
+    fig_wt = go.Figure()
+    for col in ro_result.weight_history.columns:
+        fig_wt.add_trace(go.Scatter(
+            x=ro_result.weight_history.index,
+            y=ro_result.weight_history[col].values,
+            mode="lines",
+            name=col,
+        ))
+    fig_wt.update_layout(**PLOTLY_LAYOUT)
+    fig_wt.update_layout(title="Weight Evolution (Walk-Forward)", height=350)
+    st.plotly_chart(fig_wt, use_container_width=True)
+
+    # Rolling hedged vol
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Scatter(
+        x=ro_result.vol_history.index,
+        y=ro_result.vol_history.values,
+        mode="lines",
+        name="Hedged Vol (ann.)",
+        line=dict(width=2, color="#2563eb"),
+    ))
+    fig_vol.update_layout(**PLOTLY_LAYOUT)
+    fig_vol.update_layout(
+        title="Rolling Hedged Volatility",
+        yaxis_title="Annualized Vol",
+        yaxis_tickformat=".0%",
+        height=300,
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
+
+    # Turnover
+    if len(ro_result.turnover) > 0:
+        fig_to = go.Figure(data=go.Bar(
+            x=ro_result.turnover.index,
+            y=ro_result.turnover.values,
+            marker_color="#7c3aed",
+        ))
+        fig_to.update_layout(**PLOTLY_LAYOUT)
+        fig_to.update_layout(title="Turnover Between Optimizations", height=280, yaxis_title="Turnover")
+        st.plotly_chart(fig_to, use_container_width=True)
+
+    # Weight stability table
+    st.caption("Weight Stability (standard deviation over time)")
+    fmt_stab = ro_result.weight_stability.copy()
+    fmt_stab["Std Dev"] = fmt_stab["Std Dev"].map("{:.4f}".format)
+    fmt_stab["Mean"] = fmt_stab["Mean"].map("{:.4f}".format)
+    st.dataframe(fmt_stab, use_container_width=True)

@@ -24,7 +24,7 @@ from ui.style import PLOTLY_LAYOUT
 def _metrics_table(result: CompareResult) -> pd.DataFrame:
     """Format the metrics DataFrame for display."""
     df = result.metrics_df.copy()
-    pct_rows = {"Total Return", "Ann. Return", "Ann. Volatility", "Max Drawdown", "Vol Reduction"}
+    pct_rows = {"Total Return", "Ann. Return", "Ann. Volatility", "Max Drawdown", "Vol Reduction", "Tracking Error"}
     formatted = df.copy()
     for col in formatted.columns:
         formatted[col] = df.index.map(

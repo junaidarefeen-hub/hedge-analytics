@@ -13,13 +13,13 @@ cd ~/projects/hedge-analytics
 python -m streamlit run app.py
 ```
 
-No tests or linting configured. Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, scipy, pandas, numpy).
+Tests: `pytest tests/ -v`. Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, scipy, pandas, numpy).
 
 ## Architecture
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
-- `app.py` — Entry point, 8-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest, Monte Carlo, Stress Test)
+- `app.py` — Entry point, 10-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest, Monte Carlo, Stress Test, Drawdown, Regime)
 - `config.py` — All defaults and constants (tickers, dates, strategy options, bounds, annualization)
 - `ui/sidebar.py` — Returns a `params` dict consumed by all tabs. Factors double as beta benchmarks.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
@@ -27,13 +27,15 @@ No tests or linting configured. Dependencies: `pip install -r requirements.txt` 
 ## Data Flow
 
 ```
-Sidebar → validate_and_fetch() [cached 1hr] → compute_returns()
-  ├─ Correlation/Beta tabs → matrices + rolling charts
-  ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state
+Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
+  ├─ Correlation/Beta tabs → matrices + rolling charts + dendrogram (3+ tickers)
+  ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state; optional rolling optimization
   ├─ Compare tab → compare_strategies() → runs all 4 strategies + backtests → CompareResult
-  ├─ Backtest tab → reads HedgeResult from session_state → run_backtest() → BacktestResult
-  ├─ Monte Carlo tab → reads HedgeResult from session_state → run_monte_carlo() → MonteCarloResult
-  └─ Stress Test tab → reads HedgeResult from session_state → run_stress_test() → StressTestResult
+  ├─ Backtest tab → reads HedgeResult → run_backtest() → BacktestResult; optional dynamic rebalancing
+  ├─ Monte Carlo tab → reads HedgeResult → run_monte_carlo() → MonteCarloResult
+  ├─ Stress Test tab → reads HedgeResult → run_stress_test() → StressTestResult
+  ├─ Drawdown tab → compute_drawdowns() → DrawdownAnalysis (standalone or hedged vs unhedged)
+  └─ Regime tab → detect_regimes() → RegimeResult + regime_hedge_effectiveness()
 ```
 
 **Session state bridge**: The Optimizer (and Compare tab's "Use strategy" buttons) stores `HedgeResult` and a params hash in `st.session_state`. The Backtest tab reads it. Staleness detection compares the stored hash against current sidebar params.

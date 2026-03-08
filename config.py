@@ -85,3 +85,28 @@ HISTORICAL_SCENARIOS = [
     },
 ]
 STRESS_CUSTOM_SHOCK_RANGE = (-50.0, 50.0)
+
+# Data interval / cache controls
+INTERVAL_OPTIONS = ["1d", "1h", "15m", "5m", "1m"]
+INTRADAY_MAX_DAYS = {
+    "1m": 7,
+    "5m": 60,
+    "15m": 60,
+    "1h": 730,
+    "1d": 100000,  # effectively unlimited
+}
+
+# Regime detection
+REGIME_VOL_WINDOW = 60
+REGIME_N_REGIMES = 3
+REGIME_LABELS = {0: "Low Vol", 1: "Normal", 2: "High Vol"}
+REGIME_METHODS = ["quantile", "kmeans"]
+
+# Rolling optimization
+ROLLING_OPT_WINDOW = 120
+ROLLING_OPT_STEP = 20
+
+# Dynamic rebalancing backtest
+REBALANCE_FREQUENCIES = ["weekly", "monthly", "quarterly"]
+DEFAULT_REBALANCE_FREQUENCY = "monthly"
+DEFAULT_LOOKBACK_WINDOW = 120

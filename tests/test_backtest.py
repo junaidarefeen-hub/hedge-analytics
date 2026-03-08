@@ -4,7 +4,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from analytics.backtest import BacktestResult, _compute_metrics, _max_drawdown, run_backtest
+from analytics.backtest import (
+    BacktestResult,
+    DynamicBacktestResult,
+    _compute_metrics,
+    _information_ratio,
+    _max_drawdown,
+    _max_drawdown_duration,
+    _omega_ratio,
+    _tracking_error,
+    run_backtest,
+    run_dynamic_backtest,
+)
 
 
 class TestMaxDrawdown:
@@ -32,6 +43,7 @@ class TestComputeMetrics:
         expected_keys = {
             "Total Return", "Ann. Return", "Ann. Volatility",
             "Sharpe Ratio", "Sortino Ratio", "Max Drawdown", "Calmar Ratio",
+            "Omega Ratio", "Max DD Duration (days)",
         }
         assert expected_keys == set(m.keys())
 
@@ -65,6 +77,7 @@ class TestRunBacktest:
         expected_rows = {
             "Total Return", "Ann. Return", "Ann. Volatility",
             "Sharpe Ratio", "Sortino Ratio", "Max Drawdown", "Calmar Ratio",
+            "Omega Ratio", "Max DD Duration (days)", "Tracking Error", "Information Ratio",
         }
         assert expected_rows == set(bt.metrics.index)
 
@@ -86,3 +99,96 @@ class TestRunBacktest:
                 start_date=returns.index[-1],
                 end_date=returns.index[-1],
             )
+
+
+class TestTrackingError:
+    def test_identical_series_zero(self):
+        daily = pd.Series(np.random.default_rng(1).normal(0, 0.01, 200))
+        assert _tracking_error(daily, daily) == pytest.approx(0.0)
+
+    def test_positive(self):
+        rng = np.random.default_rng(2)
+        a = pd.Series(rng.normal(0, 0.01, 200))
+        b = pd.Series(rng.normal(0, 0.01, 200))
+        assert _tracking_error(a, b) > 0
+
+
+class TestInformationRatio:
+    def test_identical_series_zero(self):
+        daily = pd.Series(np.random.default_rng(1).normal(0, 0.01, 200))
+        assert _information_ratio(daily, daily) == pytest.approx(0.0)
+
+
+class TestOmegaRatio:
+    def test_all_positive_returns(self):
+        daily = pd.Series([0.01, 0.02, 0.03, 0.01, 0.005])
+        assert _omega_ratio(daily) == float("inf")
+
+    def test_mixed_returns(self):
+        daily = pd.Series([0.01, -0.01, 0.02, -0.005])
+        omega = _omega_ratio(daily)
+        assert omega > 0
+
+
+class TestMaxDrawdownDuration:
+    def test_monotonic_series_zero(self):
+        cum = pd.Series(np.linspace(1.0, 2.0, 100))
+        assert _max_drawdown_duration(cum) == 0
+
+    def test_known_drawdown(self):
+        cum = pd.Series([1.0, 1.1, 1.0, 0.9, 1.0, 1.1, 1.2])
+        duration = _max_drawdown_duration(cum)
+        assert duration > 0
+
+
+class TestDynamicBacktest:
+    def test_result_type(self, returns):
+        hedges = ["MSFT", "SPY", "QQQ"]
+        weights = np.array([-0.4, -0.3, -0.3])
+        result = run_dynamic_backtest(
+            returns, "AAPL", hedges, weights,
+            strategy="Minimum Variance",
+            bounds=(-1.0, 0.0),
+            rebalance_freq="monthly",
+            lookback_window=60,
+        )
+        assert isinstance(result, DynamicBacktestResult)
+
+    def test_metrics_has_three_columns(self, returns):
+        hedges = ["MSFT", "SPY", "QQQ"]
+        weights = np.array([-0.4, -0.3, -0.3])
+        result = run_dynamic_backtest(
+            returns, "AAPL", hedges, weights,
+            strategy="Minimum Variance",
+            bounds=(-1.0, 0.0),
+            rebalance_freq="monthly",
+            lookback_window=60,
+        )
+        assert set(result.metrics.columns) == {"Unhedged", "Static", "Dynamic"}
+
+    def test_turnover_nonnegative(self, returns):
+        hedges = ["MSFT", "SPY", "QQQ"]
+        weights = np.array([-0.4, -0.3, -0.3])
+        result = run_dynamic_backtest(
+            returns, "AAPL", hedges, weights,
+            strategy="Minimum Variance",
+            bounds=(-1.0, 0.0),
+            rebalance_freq="monthly",
+            lookback_window=60,
+        )
+        assert (result.turnover >= 0).all()
+
+    def test_weekly_more_rebalances_than_monthly(self, returns):
+        hedges = ["MSFT", "SPY"]
+        weights = np.array([-0.5, -0.5])
+        r_w = run_dynamic_backtest(
+            returns, "AAPL", hedges, weights,
+            strategy="Minimum Variance", bounds=(-1.0, 0.0),
+            rebalance_freq="weekly", lookback_window=60,
+        )
+        r_m = run_dynamic_backtest(
+            returns, "AAPL", hedges, weights,
+            strategy="Minimum Variance", bounds=(-1.0, 0.0),
+            rebalance_freq="monthly", lookback_window=60,
+        )
+        assert len(r_w.rebalance_dates) >= len(r_m.rebalance_dates)
