@@ -38,3 +38,50 @@ MC_PERCENTILE_BANDS = [5, 25, 50, 75, 95]
 MC_SPAGHETTI_PATHS = 50
 MC_LOSS_THRESHOLDS = [0.05, 0.10]
 MC_DEFAULT_SEED = 42
+
+# Stress Testing / Scenario Analysis
+HISTORICAL_SCENARIOS = [
+    {
+        "name": "2008 GFC (Lehman Collapse)",
+        "start": "2008-09-01",
+        "end": "2009-03-09",
+        "description": "Global financial crisis: Lehman Brothers bankruptcy through market bottom",
+    },
+    {
+        "name": "2011 EU Debt Crisis",
+        "start": "2011-07-22",
+        "end": "2011-10-03",
+        "description": "European sovereign debt contagion fears; US downgrade by S&P",
+    },
+    {
+        "name": "2015 China Devaluation",
+        "start": "2015-08-10",
+        "end": "2015-09-30",
+        "description": "PBoC yuan devaluation triggers global equity selloff",
+    },
+    {
+        "name": "2018 Q4 Selloff",
+        "start": "2018-10-01",
+        "end": "2018-12-24",
+        "description": "Fed tightening + trade war fears; S&P 500 fell ~20% from peak",
+    },
+    {
+        "name": "2020 COVID Crash",
+        "start": "2020-02-19",
+        "end": "2020-03-23",
+        "description": "COVID-19 pandemic onset; fastest 30% drawdown in history",
+    },
+    {
+        "name": "2022 Rate Hike Selloff",
+        "start": "2022-01-03",
+        "end": "2022-06-16",
+        "description": "Aggressive Fed rate hikes; tech-heavy selloff, S&P down ~24%",
+    },
+    {
+        "name": "2023 Banking Crisis",
+        "start": "2023-03-08",
+        "end": "2023-03-24",
+        "description": "SVB + Signature Bank failures; regional banking contagion",
+    },
+]
+STRESS_CUSTOM_SHOCK_RANGE = (-50.0, 50.0)

@@ -19,7 +19,7 @@ No tests or linting configured. Dependencies: `pip install -r requirements.txt` 
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
-- `app.py` — Entry point, 7-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest, Monte Carlo)
+- `app.py` — Entry point, 8-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest, Monte Carlo, Stress Test)
 - `config.py` — All defaults and constants (tickers, dates, strategy options, bounds, annualization)
 - `ui/sidebar.py` — Returns a `params` dict consumed by all tabs. Factors double as beta benchmarks.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
@@ -32,7 +32,8 @@ Sidebar → validate_and_fetch() [cached 1hr] → compute_returns()
   ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state
   ├─ Compare tab → compare_strategies() → runs all 4 strategies + backtests → CompareResult
   ├─ Backtest tab → reads HedgeResult from session_state → run_backtest() → BacktestResult
-  └─ Monte Carlo tab → reads HedgeResult from session_state → run_monte_carlo() → MonteCarloResult
+  ├─ Monte Carlo tab → reads HedgeResult from session_state → run_monte_carlo() → MonteCarloResult
+  └─ Stress Test tab → reads HedgeResult from session_state → run_stress_test() → StressTestResult
 ```
 
 **Session state bridge**: The Optimizer (and Compare tab's "Use strategy" buttons) stores `HedgeResult` and a params hash in `st.session_state`. The Backtest tab reads it. Staleness detection compares the stored hash against current sidebar params.
@@ -61,6 +62,10 @@ Runs all 4 strategies for a given target, backtests each, and ranks by composite
 ## Monte Carlo (`analytics/montecarlo.py`)
 
 Simulates forward-looking portfolio paths using multivariate normal distribution fitted to historical mean returns and covariance matrix. Generates N paths over a user-chosen horizon for both hedged and unhedged portfolios. Outputs: VaR/CVaR at configurable confidence levels, probability of loss exceeding thresholds, distribution of final values, percentile bands over time. Covariance matrix gets a PSD correction if needed (`cov -= 1.1 * min_eig * I`). Hedged formula matches backtest: `target + weights @ hedges`.
+
+## Stress Test (`analytics/stress.py`)
+
+Two modes: **Historical** replays actual crisis periods (2008 GFC, 2020 COVID, 2022 rate hikes, etc.) using returns data from those dates. **Custom** applies user-defined percentage shocks per instrument. Both compute hedged vs unhedged P&L using the same formula as backtest (`target + weights @ hedges`). Historical scenarios require the sidebar date range to cover the scenario period; unavailable scenarios are skipped with a warning. Defined in `HISTORICAL_SCENARIOS` list in `config.py`.
 
 ## Key Design Decisions
 
