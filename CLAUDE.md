@@ -19,7 +19,7 @@ No tests or linting configured. Dependencies: `pip install -r requirements.txt` 
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
-- `app.py` — Entry point, 5-tab layout (Data, Correlation, Beta, Hedge Optimizer, Backtest)
+- `app.py` — Entry point, 6-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest)
 - `config.py` — All defaults and constants (tickers, dates, strategy options, bounds, annualization)
 - `ui/sidebar.py` — Returns a `params` dict consumed by all tabs. Factors double as beta benchmarks.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
@@ -30,10 +30,15 @@ No tests or linting configured. Dependencies: `pip install -r requirements.txt` 
 Sidebar → validate_and_fetch() [cached 1hr] → compute_returns()
   ├─ Correlation/Beta tabs → matrices + rolling charts
   ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state
+  ├─ Compare tab → compare_strategies() → runs all 4 strategies + backtests → CompareResult
   └─ Backtest tab → reads HedgeResult from session_state → run_backtest() → BacktestResult
 ```
 
-**Session state bridge**: The Optimizer stores `HedgeResult` and a params hash in `st.session_state`. The Backtest tab reads it. Staleness detection compares the stored hash against current sidebar params.
+**Session state bridge**: The Optimizer (and Compare tab's "Use strategy" buttons) stores `HedgeResult` and a params hash in `st.session_state`. The Backtest tab reads it. Staleness detection compares the stored hash against current sidebar params.
+
+## Strategy Compare (`analytics/compare.py`)
+
+Runs all 4 strategies for a given target, backtests each, and ranks by composite score across: Vol Reduction, Total Return, Ann. Return, Ann. Volatility, Sharpe, Sortino, Max Drawdown, Calmar. Per-metric rank (1=best) averaged into a composite rank. "Use strategy" buttons load the selected HedgeResult/BacktestResult into session_state for the Optimizer/Backtest tabs.
 
 ## Hedge Optimizer (`analytics/optimization.py`)
 
