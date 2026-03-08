@@ -1,13 +1,24 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
+from time import sleep
 
 import pandas as pd
+import requests
 import streamlit as st
 import yfinance as yf
 
 from config import CACHE_TTL_SECONDS
 
 NAME_CACHE_TTL = 86400  # 24 hours — company names rarely change
+
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+})
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Fetching price data...")
@@ -28,6 +39,7 @@ def validate_and_fetch(
         end=end.isoformat(),
         auto_adjust=True,
         progress=False,
+        session=_YF_SESSION,
     )
 
     if raw.empty:
@@ -49,14 +61,19 @@ def validate_and_fetch(
     return prices, failed
 
 
-def _fetch_single_name(ticker: str) -> tuple[str, str]:
-    """Fetch the display name for a single ticker."""
-    try:
-        info = yf.Ticker(ticker).info
-        name = info.get("longName") or info.get("shortName") or ticker
-        return ticker, name
-    except Exception:
-        return ticker, ticker
+def _fetch_single_name(ticker: str, retries: int = 2) -> tuple[str, str]:
+    """Fetch the display name for a single ticker with retry."""
+    for attempt in range(retries + 1):
+        try:
+            info = yf.Ticker(ticker, session=_YF_SESSION).info
+            name = info.get("longName") or info.get("shortName")
+            if name:
+                return ticker, name
+        except Exception:
+            pass
+        if attempt < retries:
+            sleep(0.5 * (attempt + 1))
+    return ticker, ticker
 
 
 @st.cache_data(ttl=NAME_CACHE_TTL, show_spinner="Looking up ticker names...")
