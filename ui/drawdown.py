@@ -105,6 +105,15 @@ def render_drawdown_tab(returns: pd.DataFrame, params: dict):
             st.info("Run a **Backtest** first to compare hedged vs unhedged drawdowns.")
             return
 
+        hedge_result = st.session_state.get("hedge_result")
+        if hedge_result is not None:
+            start_dt = bt_result.cumulative_unhedged.index.min().strftime("%Y-%m-%d")
+            end_dt = bt_result.cumulative_unhedged.index.max().strftime("%Y-%m-%d")
+            st.caption(
+                f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}** | "
+                f"Period: **{start_dt}** to **{end_dt}**"
+            )
+
         top_n = st.slider("Worst N drawdowns", min_value=1, max_value=10, value=5, key="dd_topn_h",
                           help="Number of worst drawdown periods to display for each portfolio.")
 

@@ -22,7 +22,7 @@ Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, sc
 
 - `app.py` — Entry point, 10-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest, Monte Carlo, Stress Test, Drawdown, Regime)
 - `config.py` — All defaults and constants (tickers, dates, strategies, bounds, intervals, regime/rolling params)
-- `ui/sidebar.py` — Returns `params` dict consumed by all tabs. Includes interval selector and cache clear button.
+- `ui/sidebar.py` — Returns `params` dict consumed by all tabs. Includes interval selector, cache clear button, and peer group load/save/delete.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
 
 ## Data Flow
@@ -49,8 +49,8 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - `_multivariate_beta_matrix()`: single aligned sample OLS for beta additivity
 - `_apply_min_names()`: caps weight to 1/N to force diversification
 - **Max gross notional**: `optimize_hedge(max_gross_notional=)` controls total hedge budget
-  - `None` (default): equality constraint `sum(w) = -1`, backward compatible
-  - When set: inequality constraint `|sum(w)| <= max_gross/notional`, optimizer freely chooses optimal hedge size
+  - UI always passes the actual value (inequality mode); `None` only used in unit tests for legacy equality mode
+  - Inequality constraint `|sum(w)| <= max_gross/notional`, optimizer freely chooses optimal hedge size
   - Per-instrument bounds auto-scale up when max_gross > notional (so full budget is accessible)
   - Post-optimization enforcement clips weights if beta-neutral equality constraints violate the gross cap
   - Risk Parity (formula-based): uses `min(1.0, max_hedge_ratio)` since there's no optimizer objective
@@ -92,3 +92,6 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - Rolling optimization and dynamic rebalancing use radio toggles (static vs dynamic) within their respective tabs
 - Late import of `optimize_hedge` in `run_dynamic_backtest()` to avoid circular dependency (backtest ↔ optimization)
 - `max_gross_notional` propagates through: `optimize_hedge` → `compare_strategies` / `rolling_optimize` / `run_dynamic_backtest`; UI always passes the actual max_gross value (inequality mode) so the optimizer can freely choose the optimal hedge size up to the cap
+- Correlation/beta matrices use full-period calculations; rolling window only affects rolling line charts
+- Peer group loading uses a two-phase rerun: phase 1 stages pending tickers + selectbox reset, phase 2 (before widget render) applies them. This avoids Streamlit's "cannot modify session_state after widget instantiation" error and prevents infinite rerun loops.
+- Drawdown (hedged mode) and Regime tabs display strategy, target, and analysis period for context

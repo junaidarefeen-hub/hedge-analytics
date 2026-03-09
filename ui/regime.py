@@ -140,6 +140,11 @@ def render_regime_tab(returns: pd.DataFrame, params: dict):
 
     ref = st.session_state.get("regime_ref_ticker", ref_ticker)
 
+    # Context: date range
+    start_dt = returns.index.min().strftime("%Y-%m-%d")
+    end_dt = returns.index.max().strftime("%Y-%m-%d")
+    st.caption(f"Reference: **{ref}** | Period: **{start_dt}** to **{end_dt}**")
+
     # Charts
     st.plotly_chart(
         _price_chart_with_regimes(returns, ref, regime_result),
@@ -162,6 +167,9 @@ def render_regime_tab(returns: pd.DataFrame, params: dict):
     hedge_result = st.session_state.get("hedge_result")
     if hedge_result is not None:
         st.subheader("Hedge Effectiveness by Regime")
+        st.caption(
+            f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**"
+        )
         try:
             eff = regime_hedge_effectiveness(
                 returns=returns,
