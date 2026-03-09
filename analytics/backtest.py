@@ -106,7 +106,7 @@ def run_backtest(
     start_date: pd.Timestamp | None = None,
     end_date: pd.Timestamp | None = None,
     rolling_window: int = 60,
-    risk_free: float = 0.05,
+    risk_free: float = 0.0,
 ) -> BacktestResult:
     """Run backtest of hedged vs unhedged portfolio over date range."""
     cols = [target] + hedge_instruments
@@ -205,12 +205,13 @@ def run_dynamic_backtest(
     rebalance_freq: str = "monthly",
     lookback_window: int = 120,
     rolling_window: int = 60,
-    risk_free: float = 0.05,
+    risk_free: float = 0.0,
     factors: list[str] | None = None,
     confidence: float = 0.95,
     min_names: int = 0,
-    notional: float = 1_000_000.0,
+    notional: float = 10_000_000.0,
     progress_callback=None,
+    max_gross_notional: float | None = None,
 ) -> DynamicBacktestResult:
     """Run dynamic rebalancing backtest with periodic re-optimization."""
     from analytics.optimization import optimize_hedge
@@ -252,6 +253,7 @@ def run_dynamic_backtest(
                 confidence=confidence,
                 min_names=min_names,
                 rolling_window=min(rolling_window, len(lookback_slice)),
+                max_gross_notional=max_gross_notional,
             )
             current_weights = hedge_result.weights
         except Exception:

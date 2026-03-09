@@ -68,11 +68,80 @@ METRIC_DESCRIPTIONS = {
 
 
 def add_metric_descriptions(df: "pd.DataFrame") -> "pd.DataFrame":
-    """Add a 'Description' column to a metrics DataFrame based on its index."""
+    """Add a 'Description' column to a metrics DataFrame based on its index.
+
+    DEPRECATED: use render_metrics_table() for hover-based tooltips instead.
+    """
     import pandas as pd
     out = df.copy()
     out.insert(0, "Description", [METRIC_DESCRIPTIONS.get(idx, "") for idx in out.index])
     return out
+
+
+def render_metrics_table(df: "pd.DataFrame") -> None:
+    """Render a metrics DataFrame as an HTML table with hover tooltips on metric names.
+
+    Uses st.html() to avoid Streamlit's HTML sanitization which strips title attributes.
+    Each metric name cell shows a styled tooltip on hover via CSS.
+    """
+    import html as html_mod
+
+    rows_html = []
+    for idx in df.index:
+        desc = METRIC_DESCRIPTIONS.get(idx, "")
+        escaped_idx = html_mod.escape(str(idx))
+        escaped_desc = html_mod.escape(desc)
+        cells = "".join(
+            f'<td class="mt-val">{html_mod.escape(str(df.loc[idx, col]))}</td>'
+            for col in df.columns
+        )
+        if desc:
+            metric_cell = (
+                f'<td class="mt-metric" title="{escaped_desc}">'
+                f'<span class="mt-tip" data-tip="{escaped_desc}">{escaped_idx}</span></td>'
+            )
+        else:
+            metric_cell = f'<td class="mt-metric">{escaped_idx}</td>'
+        rows_html.append(f'<tr>{metric_cell}{cells}</tr>')
+
+    header_cells = "".join(
+        f'<th class="mt-hdr mt-hdr-val">{html_mod.escape(str(col))}</th>'
+        for col in df.columns
+    )
+
+    table_html = f"""
+    <style>
+    .mt-wrap {{ overflow-x:auto; border:1px solid #e2e8f0; border-radius:8px; }}
+    .mt-wrap table {{ width:100%; border-collapse:collapse; font-family:Inter,system-ui,sans-serif; }}
+    .mt-hdr {{ padding:8px 12px; border-bottom:2px solid #cbd5e1; font-size:13px;
+               font-weight:600; color:#475569; text-align:left; }}
+    .mt-hdr-val {{ text-align:right; }}
+    .mt-metric {{ padding:6px 12px; border-bottom:1px solid #e2e8f0; font-weight:500;
+                  font-size:13px; position:relative; }}
+    .mt-val {{ padding:6px 12px; border-bottom:1px solid #e2e8f0; text-align:right; font-size:13px; }}
+    .mt-tip {{ cursor:help; text-decoration:underline dotted #94a3b8;
+               text-underline-offset:3px; position:relative; display:inline-block; }}
+    .mt-tip::after {{
+        content: attr(data-tip);
+        position: absolute; left: 0; bottom: 100%; margin-bottom: 6px;
+        background: #1e293b; color: #f8fafc; padding: 6px 10px;
+        border-radius: 6px; font-size: 12px; font-weight: 400;
+        line-height: 1.4; white-space: normal; width: max-content; max-width: 320px;
+        opacity: 0; pointer-events: none; transition: opacity 0.15s; z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }}
+    .mt-tip:hover::after {{ opacity: 1; }}
+    .mt-hint {{ font-size:11px; color:#94a3b8; margin-top:4px; padding-left:4px; }}
+    </style>
+    <div class="mt-wrap">
+    <table>
+        <thead><tr><th class="mt-hdr">Metric</th>{header_cells}</tr></thead>
+        <tbody>{''.join(rows_html)}</tbody>
+    </table>
+    </div>
+    <p class="mt-hint">Hover over metric names for descriptions.</p>
+    """
+    st.html(table_html)
 
 
 def inject_css():

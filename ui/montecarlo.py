@@ -17,7 +17,7 @@ from config import (
     MC_SPAGHETTI_PATHS,
 )
 from ui.optimizer import _params_hash
-from ui.style import PLOTLY_LAYOUT, add_metric_descriptions
+from ui.style import PLOTLY_LAYOUT, render_metrics_table
 
 
 def _hex_to_rgb(hex_color: str) -> str:
@@ -236,7 +236,7 @@ def render_montecarlo_tab(returns: pd.DataFrame, params: dict):
                     else f"{result.metrics.loc[idx, c]:.4f}"
                 )
             )
-        st.dataframe(add_metric_descriptions(fmt_metrics), use_container_width=True)
+        render_metrics_table(fmt_metrics)
 
         # Distribution histogram
         st.plotly_chart(_distribution_chart(result), use_container_width=True)

@@ -26,6 +26,10 @@ class HedgeResult:
     unhedged_betas: dict[str, float]
     portfolio_correlation: float
     rolling_correlation: pd.Series
+    hedge_ratio: float = 1.0
+    max_gross_notional: float | None = None
+    bounds: tuple[float, float] = (-1.0, 0.0)
+    min_names: int = 0
     beta_neutral_feasible: bool | None = None
     cvar: float | None = None
     confidence_level: float | None = None
@@ -78,10 +82,29 @@ def _multivariate_beta_matrix(
     return beta_matrix, X
 
 
-def _weight_sum_constraint(bounds: tuple[float, float]) -> dict:
-    """Equality constraint: weights sum to -1 (short-only) or +1 (long-only)."""
-    target_sum = -1.0 if bounds[1] <= 0 else 1.0
-    return {"type": "eq", "fun": lambda w: np.sum(w) - target_sum}
+def _weight_sum_constraint(
+    bounds: tuple[float, float],
+    max_hedge_ratio: float = 1.0,
+    use_inequality: bool = False,
+) -> dict:
+    """Sum constraint on weights.
+
+    Equality mode (default): weights sum to exactly -1 (short) or +1 (long).
+    Inequality mode: |sum(weights)| <= max_hedge_ratio. The optimizer freely
+    chooses the optimal hedge size up to the cap.
+    """
+    if bounds[1] <= 0:  # short-only: sum is negative
+        if use_inequality:
+            # sum(w) >= -max_hedge_ratio  ⟹  sum(w) + max_hedge_ratio >= 0
+            return {"type": "ineq", "fun": lambda w, m=max_hedge_ratio: np.sum(w) + m}
+        else:
+            return {"type": "eq", "fun": lambda w: np.sum(w) + 1.0}
+    else:  # long-only: sum is positive
+        if use_inequality:
+            # sum(w) <= max_hedge_ratio  ⟹  max_hedge_ratio - sum(w) >= 0
+            return {"type": "ineq", "fun": lambda w, m=max_hedge_ratio: m - np.sum(w)}
+        else:
+            return {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
 
 
 def optimize_min_variance(
@@ -89,17 +112,21 @@ def optimize_min_variance(
     target: str,
     hedges: list[str],
     bounds: tuple[float, float],
+    max_hedge_ratio: float = 1.0,
+    use_inequality: bool = False,
 ) -> np.ndarray:
     n = len(hedges)
     sigma_hh, sigma_ht, var_t = _covariance_pieces(returns, target, hedges)
-    w0 = np.full(n, -1.0 / n) if bounds[0] < 0 else np.full(n, 1.0 / n)
+    # Initial guess: distribute evenly, capped at 1.0 for a reasonable starting point
+    init_ratio = min(1.0, max_hedge_ratio)
+    w0 = np.full(n, -init_ratio / n) if bounds[0] < 0 else np.full(n, init_ratio / n)
     res = minimize(
         _min_variance_objective,
         w0,
         args=(sigma_hh, sigma_ht, var_t),
         method="SLSQP",
         bounds=[bounds] * n,
-        constraints=[_weight_sum_constraint(bounds)],
+        constraints=[_weight_sum_constraint(bounds, max_hedge_ratio, use_inequality)],
         options={"maxiter": 500, "ftol": 1e-12},
     )
     return res.x
@@ -111,6 +138,8 @@ def optimize_beta_neutral(
     hedges: list[str],
     factors: list[str],
     bounds: tuple[float, float],
+    max_hedge_ratio: float = 1.0,
+    use_inequality: bool = False,
 ) -> np.ndarray:
     """Min-variance with equality constraints: portfolio beta = 0 for each factor.
 
@@ -120,10 +149,11 @@ def optimize_beta_neutral(
     n = len(hedges)
     valid_factors = [f for f in factors if f in returns.columns]
     sigma_hh, sigma_ht, var_t = _covariance_pieces(returns, target, hedges)
-    w0 = np.full(n, -1.0 / n) if bounds[0] < 0 else np.zeros(n)
+    init_ratio = min(1.0, max_hedge_ratio)
+    w0 = np.full(n, -init_ratio / n) if bounds[0] < 0 else np.zeros(n)
 
     if not valid_factors:
-        return optimize_min_variance(returns, target, hedges, bounds)
+        return optimize_min_variance(returns, target, hedges, bounds, max_hedge_ratio, use_inequality)
 
     # Compute all betas on a single aligned sample
     all_tickers = [target] + hedges
@@ -132,13 +162,13 @@ def optimize_beta_neutral(
     target_betas = beta_matrix[0]           # shape (n_factors,)
     hedge_betas = beta_matrix[1:]           # shape (n_hedges, n_factors)
 
-    # Limit number of beta constraints to n_hedges - 1 to avoid over-determination
-    # (we already have the sum constraint using 1 degree of freedom)
-    max_beta_constraints = n - 1
+    # With inequality mode, beta constraints can determine the hedge size freely,
+    # so we allow more beta constraints (up to n_hedges)
+    max_beta_constraints = n if use_inequality else n - 1
     active_factors = valid_factors[:max_beta_constraints]
 
     # One constraint per active factor: w @ hedge_betas_f + target_beta_f = 0
-    constraints = [_weight_sum_constraint(bounds)]
+    constraints = [_weight_sum_constraint(bounds, max_hedge_ratio, use_inequality)]
     for j, factor in enumerate(active_factors):
         bt = float(target_betas[j])
         hb = hedge_betas[:, j].copy()
@@ -152,7 +182,7 @@ def optimize_beta_neutral(
 
     if not beta_constraints:
         # No beta constraints — fall back to min variance
-        return optimize_min_variance(returns, target, hedges, bounds), True
+        return optimize_min_variance(returns, target, hedges, bounds, max_hedge_ratio, use_inequality), True
 
     # Try hard constraints first (sum + all betas as equalities)
     res = minimize(
@@ -194,6 +224,8 @@ def optimize_cvar(
     hedges: list[str],
     bounds: tuple[float, float],
     confidence: float = 0.95,
+    max_hedge_ratio: float = 1.0,
+    use_inequality: bool = False,
 ) -> tuple[np.ndarray, float]:
     """Minimize CVaR via Rockafellar-Uryasev linearization. Returns (weights, cvar)."""
     cols = [target] + hedges
@@ -203,7 +235,8 @@ def optimize_cvar(
     n_hedge = r_hedges.shape[1]
     T = len(r_target)
 
-    w0_hedge = np.full(n_hedge, -1.0 / n_hedge) if bounds[0] < 0 else np.zeros(n_hedge)
+    init_ratio = min(1.0, max_hedge_ratio)
+    w0_hedge = np.full(n_hedge, -init_ratio / n_hedge) if bounds[0] < 0 else np.zeros(n_hedge)
     # x = [w_1..w_n, alpha]  where alpha is the VaR auxiliary variable
     x0 = np.concatenate([w0_hedge, [0.0]])
 
@@ -214,8 +247,14 @@ def optimize_cvar(
         losses = -port_returns - alpha
         return alpha + np.mean(np.maximum(losses, 0)) / (1 - confidence)
 
-    target_sum = -1.0 if bounds[1] <= 0 else 1.0
-    sum_constr = {"type": "eq", "fun": lambda x: np.sum(x[:n_hedge]) - target_sum}
+    if use_inequality:
+        if bounds[1] <= 0:
+            sum_constr = {"type": "ineq", "fun": lambda x, m=max_hedge_ratio: np.sum(x[:n_hedge]) + m}
+        else:
+            sum_constr = {"type": "ineq", "fun": lambda x, m=max_hedge_ratio: m - np.sum(x[:n_hedge])}
+    else:
+        target_sum = -1.0 if bounds[1] <= 0 else 1.0
+        sum_constr = {"type": "eq", "fun": lambda x: np.sum(x[:n_hedge]) - target_sum}
     bnds = [bounds] * n_hedge + [(-np.inf, np.inf)]
     res = minimize(
         cvar_obj,
@@ -240,18 +279,70 @@ def compute_risk_parity(
     returns: pd.DataFrame,
     hedges: list[str],
     bounds: tuple[float, float],
+    max_hedge_ratio: float = 1.0,
 ) -> np.ndarray:
-    """Inverse-volatility weighting, scaled to bounds."""
+    """Inverse-volatility weighting, clipped to per-instrument bounds.
+
+    Risk parity is formula-based (no optimizer), so it uses min(1.0, max_hedge_ratio)
+    as the hedge size — full hedge when budget allows, scaled down when capped.
+    Individual weights are clipped to the per-instrument bounds and then renormalized
+    iteratively until all weights respect the bounds.
+    """
     vols = returns[hedges].std().values
     # Avoid division by zero
     vols = np.where(vols == 0, 1e-10, vols)
     raw = 1.0 / vols
     raw = raw / raw.sum()  # normalize to sum=1
-    # Scale so weights sum to -1 (short-only) or +1 (long-only)
+    # Risk parity uses full hedge (1.0) when budget allows, partial when capped
+    effective_ratio = min(1.0, max_hedge_ratio)
     if bounds[1] <= 0:
-        weights = -raw  # sum to -1
+        weights = -raw * effective_ratio
+        # Clip to per-instrument bounds and iteratively renormalize
+        lb = bounds[0]
+        for _ in range(20):  # converges in a few iterations
+            clipped = np.clip(weights, lb, 0.0)
+            total = np.sum(clipped)
+            if total == 0 or np.allclose(clipped, weights, atol=1e-10):
+                weights = clipped
+                break
+            # Redistribute excess among non-clipped instruments
+            capped_mask = np.isclose(clipped, lb)
+            free_mask = ~capped_mask
+            if not free_mask.any():
+                weights = clipped
+                break
+            target_sum = -effective_ratio
+            capped_sum = clipped[capped_mask].sum()
+            remaining = target_sum - capped_sum
+            free_raw = 1.0 / vols[free_mask]
+            free_raw = free_raw / free_raw.sum()
+            clipped[free_mask] = free_raw * remaining
+            weights = clipped
+        else:
+            weights = np.clip(weights, lb, 0.0)
     else:
-        weights = raw   # sum to +1
+        weights = raw * effective_ratio
+        # Clip to per-instrument bounds and iteratively renormalize
+        ub = bounds[1]
+        for _ in range(20):
+            clipped = np.clip(weights, 0.0, ub)
+            if np.allclose(clipped, weights, atol=1e-10):
+                weights = clipped
+                break
+            capped_mask = np.isclose(clipped, ub)
+            free_mask = ~capped_mask
+            if not free_mask.any():
+                weights = clipped
+                break
+            target_sum = effective_ratio
+            capped_sum = clipped[capped_mask].sum()
+            remaining = target_sum - capped_sum
+            free_raw = 1.0 / vols[free_mask]
+            free_raw = free_raw / free_raw.sum()
+            clipped[free_mask] = free_raw * remaining
+            weights = clipped
+        else:
+            weights = np.clip(weights, 0.0, ub)
     return weights
 
 
@@ -259,7 +350,7 @@ def _apply_min_names(bounds: tuple[float, float], n: int, min_names: int) -> tup
     """Tighten bounds to enforce minimum number of active instruments.
 
     Caps max absolute weight per instrument to 1/min_names, so at least
-    min_names instruments must be used to reach the sum constraint.
+    min_names instruments must be used to fill the hedge budget.
     """
     if min_names <= 1 or min_names > n:
         return bounds
@@ -284,8 +375,21 @@ def optimize_hedge(
     confidence: float = 0.95,
     min_names: int = 0,
     rolling_window: int = 60,
+    max_gross_notional: float | None = None,
 ) -> HedgeResult:
-    """Main entry point: run chosen strategy and return HedgeResult."""
+    """Main entry point: run chosen strategy and return HedgeResult.
+
+    Parameters
+    ----------
+    max_gross_notional : float | None
+        Dollar cap on total hedge notional. When specified, the optimizer uses
+        an inequality constraint (|sum(w)| <= max_gross / notional) instead of
+        the default equality (sum = -1). This lets the optimizer freely choose
+        the optimal hedge size — e.g. beta-neutral will use exactly the notional
+        needed to zero out beta, min-variance finds the variance-minimizing
+        level. Per-instrument bounds scale up when max_gross > notional so the
+        full budget is accessible. None = no cap, equality sum = -1 (default).
+    """
     hedges = [h for h in hedge_instruments if h != target and h in returns.columns]
     if not hedges:
         raise ValueError("No valid hedge instruments after filtering.")
@@ -295,27 +399,53 @@ def optimize_hedge(
             f"Min names ({min_names}) exceeds available hedge instruments ({len(hedges)})."
         )
 
-    effective_bounds = _apply_min_names(bounds, len(hedges), min_names)
+    # Compute max hedge ratio from max gross notional cap
+    use_inequality = max_gross_notional is not None
+    if use_inequality and notional > 0:
+        max_hedge_ratio = max_gross_notional / notional
+    else:
+        max_hedge_ratio = 1.0
+
+    # Scale per-instrument bounds when max budget exceeds notional
+    lb, ub = bounds
+    if max_hedge_ratio > 1.0:
+        if ub <= 0:  # short-only: expand lower bound
+            scaled_bounds = (lb * max_hedge_ratio, ub)
+        else:  # long-only: expand upper bound
+            scaled_bounds = (lb, ub * max_hedge_ratio)
+    else:
+        scaled_bounds = bounds
+
+    effective_bounds = _apply_min_names(scaled_bounds, len(hedges), min_names)
 
     cvar_val = None
     conf_val = None
     beta_feasible = None
 
     if strategy == "Minimum Variance":
-        weights = optimize_min_variance(returns, target, hedges, effective_bounds)
+        weights = optimize_min_variance(returns, target, hedges, effective_bounds, max_hedge_ratio, use_inequality)
     elif strategy == "Beta-Neutral":
         sel_factors = factors or []
-        weights, beta_feasible = optimize_beta_neutral(returns, target, hedges, sel_factors, effective_bounds)
+        weights, beta_feasible = optimize_beta_neutral(returns, target, hedges, sel_factors, effective_bounds, max_hedge_ratio, use_inequality)
     elif strategy == "Tail Risk (CVaR)":
-        weights, cvar_val = optimize_cvar(returns, target, hedges, effective_bounds, confidence)
+        weights, cvar_val = optimize_cvar(returns, target, hedges, effective_bounds, confidence, max_hedge_ratio, use_inequality)
         conf_val = confidence
     elif strategy == "Risk Parity":
-        weights = compute_risk_parity(returns, hedges, effective_bounds)
+        weights = compute_risk_parity(returns, hedges, effective_bounds, max_hedge_ratio)
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 
+    # Enforce max gross constraint: if optimizer violated it (e.g. beta-neutral
+    # equality constraints overriding the sum inequality), scale weights down
+    if use_inequality and notional > 0:
+        actual_abs_sum = float(np.sum(np.abs(weights)))
+        if actual_abs_sum > max_hedge_ratio * 1.001:
+            weights = weights * (max_hedge_ratio / actual_abs_sum)
+
     notionals = weights * notional
     total_hedge = float(np.sum(np.abs(notionals)))
+    # Actual hedge ratio = total hedge / target notional (how much of position is hedged)
+    hedge_ratio = total_hedge / notional if notional > 0 else 0.0
 
     sigma_hh, sigma_ht, var_t = _covariance_pieces(returns, target, hedges)
     hedged_vol = _portfolio_vol(weights, sigma_hh, sigma_ht, var_t)
@@ -360,6 +490,10 @@ def optimize_hedge(
         unhedged_betas=unhedged_betas,
         portfolio_correlation=port_corr,
         rolling_correlation=rolling_corr,
+        hedge_ratio=hedge_ratio,
+        max_gross_notional=max_gross_notional,
+        bounds=bounds,
+        min_names=min_names,
         beta_neutral_feasible=beta_feasible,
         cvar=cvar_val,
         confidence_level=conf_val,

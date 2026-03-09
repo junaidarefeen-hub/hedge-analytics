@@ -44,10 +44,11 @@ def rolling_optimize(
     factors: list[str] | None = None,
     confidence: float = 0.95,
     min_names: int = 0,
-    notional: float = 1_000_000.0,
+    notional: float = 10_000_000.0,
     rolling_window: int = 60,
-    risk_free: float = 0.05,
+    risk_free: float = 0.0,
     progress_callback=None,
+    max_gross_notional: float | None = None,
 ) -> RollingOptResult:
     """Run walk-forward optimization at regular step intervals.
 
@@ -88,6 +89,7 @@ def rolling_optimize(
                 confidence=confidence,
                 min_names=min_names,
                 rolling_window=min(rolling_window, len(slice_returns)),
+                max_gross_notional=max_gross_notional,
             )
             weights = result.weights
             vol = result.hedged_volatility

@@ -53,6 +53,7 @@ def compare_strategies(
     risk_free: float,
     start_date: pd.Timestamp | None = None,
     end_date: pd.Timestamp | None = None,
+    max_gross_notional: float | None = None,
 ) -> CompareResult:
     """Run all strategies, backtest each, build comparison."""
     comparisons: list[StrategyComparison] = []
@@ -71,6 +72,7 @@ def compare_strategies(
                 confidence=confidence,
                 min_names=min_names,
                 rolling_window=rolling_window,
+                max_gross_notional=max_gross_notional,
             )
             bt_result = run_backtest(
                 returns=returns,

@@ -44,10 +44,19 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 
 ## Key Modules
 
-### `analytics/optimization.py` — 4 strategies, weights sum to -1 (short) or +1 (long)
+### `analytics/optimization.py` — 4 strategies with max gross notional constraint
 - Minimum Variance (SLSQP), Beta-Neutral (SLSQP + soft penalty fallback), CVaR (Rockafellar-Uryasev), Risk Parity (inverse-vol)
 - `_multivariate_beta_matrix()`: single aligned sample OLS for beta additivity
 - `_apply_min_names()`: caps weight to 1/N to force diversification
+- **Max gross notional**: `optimize_hedge(max_gross_notional=)` controls total hedge budget
+  - `None` (default): equality constraint `sum(w) = -1`, backward compatible
+  - When set: inequality constraint `|sum(w)| <= max_gross/notional`, optimizer freely chooses optimal hedge size
+  - Per-instrument bounds auto-scale up when max_gross > notional (so full budget is accessible)
+  - Post-optimization enforcement clips weights if beta-neutral equality constraints violate the gross cap
+  - Risk Parity (formula-based): uses `min(1.0, max_hedge_ratio)` since there's no optimizer objective
+  - `HedgeResult` stores `hedge_ratio` (actual) and `max_gross_notional` (cap) for downstream use
+- **Weight display**: UI normalizes by `|sum(weights)|` so allocation percentages always sum to 100%; notional $ columns show actual deployed amounts
+- All downstream analytics (backtest, MC, stress, drawdown, regime) are weight-sum agnostic — they use `target + hedges @ weights` directly
 
 ### `analytics/backtest.py` — Static + dynamic backtesting
 - 11 metrics: Total/Ann. Return, Ann. Vol, Sharpe, Sortino, Max DD, Calmar, Omega, Max DD Duration, Tracking Error, Information Ratio
@@ -75,10 +84,11 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 
 ## Key Design Decisions
 
-- Weights displayed as absolute values with Side column (Short/Long); zero-weight filtered out
+- Weights displayed as allocation percentages (normalized to 100% of hedge basket) with Side column (Short/Long); zero-weight filtered out
 - Correlation = target vs weighted hedge basket (using `abs(weights)`)
 - Backtest metrics: returns/vol/drawdown/TE as percentages; ratios (Sharpe/Sortino/Calmar/Omega/IR) as decimals; DD duration as integer days
 - All charts use `PLOTLY_LAYOUT` from `ui/style.py` as base
 - Theme: blue primary (#2563eb), configured in `.streamlit/config.toml`
 - Rolling optimization and dynamic rebalancing use radio toggles (static vs dynamic) within their respective tabs
 - Late import of `optimize_hedge` in `run_dynamic_backtest()` to avoid circular dependency (backtest ↔ optimization)
+- `max_gross_notional` propagates through: `optimize_hedge` → `compare_strategies` / `rolling_optimize` / `run_dynamic_backtest`; UI passes `None` when max_gross == notional (no cap) to preserve default equality behavior

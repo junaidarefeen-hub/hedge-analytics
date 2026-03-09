@@ -14,15 +14,17 @@ from analytics.optimization import HedgeResult, optimize_hedge
 from analytics.rolling_optimization import RollingOptResult, rolling_optimize
 from config import (
     DEFAULT_CVAR_CONFIDENCE,
+    DEFAULT_MAX_GROSS_RATIO,
     DEFAULT_MIN_HEDGE_NAMES,
     DEFAULT_NOTIONAL,
+    DEFAULT_RISK_FREE_RATE,
     DEFAULT_STRATEGY,
     DEFAULT_WEIGHT_BOUNDS,
     ROLLING_OPT_STEP,
     ROLLING_OPT_WINDOW,
     STRATEGY_OPTIONS,
 )
-from ui.style import PLOTLY_LAYOUT, add_metric_descriptions
+from ui.style import PLOTLY_LAYOUT, render_metrics_table
 
 
 def _params_hash(params: dict) -> str:
@@ -65,7 +67,8 @@ def _rolling_corr_chart(result: HedgeResult, window: int) -> go.Figure:
 
 
 def _weight_bar_chart(result: HedgeResult) -> go.Figure:
-    abs_pcts = np.abs(result.weights) * 100
+    weight_sum = float(np.sum(np.abs(result.weights)))
+    abs_pcts = np.abs(result.weights) / weight_sum * 100 if weight_sum > 0 else np.abs(result.weights) * 100
     # Filter out near-zero weights
     mask = abs_pcts > 0.01
     tickers = [t for t, m in zip(result.hedge_instruments, mask) if m]
@@ -119,13 +122,27 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
         )
 
         notional = st.number_input(
-            "Notional ($)",
+            f"Notional (default ${DEFAULT_NOTIONAL:,.0f})",
             min_value=1000.0,
             value=DEFAULT_NOTIONAL,
-            step=10000.0,
+            step=1_000_000.0,
             format="%.0f",
             key="opt_notional",
             help="Dollar value of your long position. Used to calculate hedge notional amounts.",
+        )
+
+        max_gross = st.number_input(
+            f"Max hedge notional (default ${DEFAULT_NOTIONAL * DEFAULT_MAX_GROSS_RATIO:,.0f})",
+            min_value=0.0,
+            value=DEFAULT_NOTIONAL * DEFAULT_MAX_GROSS_RATIO,
+            step=1_000_000.0,
+            format="%.0f",
+            key="opt_max_gross",
+            help="Maximum total dollar value of the hedge portfolio. "
+                 "When set different from notional, the optimizer uses an inequality constraint "
+                 "to find the truly optimal hedge size within this budget — including deploying more "
+                 "than 100% of notional if needed (e.g., for beta-neutral hedging). "
+                 "Set equal to notional for the default fully-allocated hedge (weights sum to -1).",
         )
 
         hedge_universe = st.selectbox(
@@ -183,13 +200,20 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
             step=1,
             key="opt_min_names",
             help="Minimum number of instruments in the hedge basket. "
-                 "Caps max weight per name to 1/N. Set 0 to disable.",
+                 "Caps max weight per name to 1/N, which may conflict with tight weight bounds — "
+                 "if total capacity (N instruments × effective max weight) < 100%, "
+                 "the optimizer cannot fully allocate the hedge. Set 0 to disable.",
         )
 
         lb = st.number_input("Weight lower bound", value=DEFAULT_WEIGHT_BOUNDS[0], step=0.1, format="%.2f", key="opt_lb",
-                             help="Minimum weight per hedge instrument. Negative = short positions (typical for hedging). E.g., -1.0 allows full short allocation.")
+                             help="Minimum weight per hedge instrument. Negative = short positions (typical for hedging). "
+                                  "E.g., -1.0 allows full short allocation to a single name. "
+                                  "Tightened automatically by min hedge names (capped to -1/N). "
+                                  "Auto-scales when max hedge notional exceeds notional.")
         ub = st.number_input("Weight upper bound", value=DEFAULT_WEIGHT_BOUNDS[1], step=0.1, format="%.2f", key="opt_ub",
-                             help="Maximum weight per hedge instrument. Set to 0.0 for short-only hedges, or positive to allow long hedge positions.")
+                             help="Maximum weight per hedge instrument. Set to 0.0 for short-only hedges, "
+                                  "or positive to allow long hedge positions. "
+                                  "Auto-scales when max hedge notional exceeds notional.")
 
         if lb >= ub:
             st.error("Lower bound must be less than upper bound.")
@@ -212,6 +236,18 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
             st.error(f"Min hedge names ({min_names}) exceeds available instruments ({len(hedge_instruments)}).")
             return
 
+        # Warn if bounds + min_names make it impossible to fill the hedge budget
+        if min_names > 0:
+            max_abs_per_name = 1.0 / min_names
+            effective_max = min(max_abs_per_name, max(abs(lb), abs(ub)))
+            total_capacity = len(hedge_instruments) * effective_max
+            if total_capacity < 1.0:
+                st.warning(
+                    f"Weight bounds (max {effective_max:.2f} per name) with {len(hedge_instruments)} "
+                    f"instruments can only reach {total_capacity:.0%} of the hedge budget. "
+                    f"The optimizer may not find a feasible solution. Widen the bounds or reduce min hedge names."
+                )
+
         st.caption(f"Hedge universe ({len(hedge_instruments)}): {', '.join(hedge_instruments)}")
 
         run_opt = st.button("Optimize", type="primary", use_container_width=True, key="opt_run")
@@ -232,6 +268,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
                     confidence=confidence,
                     min_names=min_names,
                     rolling_window=params["window"],
+                    max_gross_notional=max_gross if max_gross != notional else None,
                 )
                 st.session_state["hedge_result"] = result
                 st.session_state["hedge_params_hash"] = _params_hash(params)
@@ -251,12 +288,13 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
         if stored_hash and stored_hash != current_hash:
             st.warning("Sidebar parameters have changed since last optimization. Results may be stale.")
 
-        # Weights table — show absolute percentages for readability
-        abs_weights = np.abs(result.weights)
+        # Weights table — show allocation percentages (normalized to 100% of hedge basket)
+        weight_sum = float(np.sum(np.abs(result.weights)))
+        display_weights = np.abs(result.weights) / weight_sum if weight_sum > 0 else np.abs(result.weights)
         side = "Short" if result.weights[0] <= 0 else "Long"
         weights_df = pd.DataFrame({
             "Ticker": result.hedge_instruments,
-            "Weight (%)": np.round(abs_weights * 100, 2),
+            "Weight (%)": np.round(display_weights * 100, 2),
             "Notional ($)": [f"{v:,.0f}" for v in np.abs(result.notionals)],
             "Side": [side] * len(result.hedge_instruments),
         })
@@ -337,7 +375,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
 
 def _render_rolling_optimization(returns, params, hedge_result):
     """Render rolling optimization controls and results."""
-    rc1, rc2 = st.columns(2)
+    rc1, rc2, rc3 = st.columns(3)
     with rc1:
         ro_window = st.number_input(
             "Rolling window (days)", min_value=30, max_value=504,
@@ -350,6 +388,12 @@ def _render_rolling_optimization(returns, params, hedge_result):
             value=ROLLING_OPT_STEP, step=5, key="ro_step",
             help="Number of trading days between each re-optimization. Smaller steps give more frequent updates but take longer to compute.",
         )
+    with rc3:
+        ro_risk_free = st.number_input(
+            "Risk-free rate", min_value=0.0, max_value=0.20,
+            value=DEFAULT_RISK_FREE_RATE, step=0.01, format="%.2f", key="ro_rf",
+            help="Annual risk-free rate used to calculate Sharpe and Sortino ratios.",
+        )
 
     run_ro = st.button("Run Rolling Optimization", type="primary", key="ro_run")
 
@@ -361,16 +405,18 @@ def _render_rolling_optimization(returns, params, hedge_result):
                 target=hedge_result.target_ticker,
                 hedge_instruments=hedge_result.hedge_instruments,
                 strategy=hedge_result.strategy,
-                bounds=(-1.0, 0.0) if hedge_result.weights[0] <= 0 else (0.0, 1.0),
+                bounds=hedge_result.bounds,
                 static_weights=hedge_result.weights,
                 window=ro_window,
                 step=ro_step,
                 factors=list(hedge_result.portfolio_betas.keys()) if hedge_result.portfolio_betas else None,
                 confidence=hedge_result.confidence_level or 0.95,
-                min_names=0,
+                min_names=hedge_result.min_names,
                 notional=hedge_result.target_notional,
                 rolling_window=params["window"],
+                risk_free=ro_risk_free,
                 progress_callback=lambda p: progress.progress(p, text=f"Optimizing... {p:.0%}"),
+                max_gross_notional=hedge_result.max_gross_notional,
             )
             st.session_state["rolling_opt_result"] = ro_result
             progress.empty()
@@ -456,7 +502,7 @@ def _render_rolling_optimization(returns, params, hedge_result):
             else (f"{int(ro_result.metrics.loc[idx, c])}" if idx in int_rows
                   else f"{ro_result.metrics.loc[idx, c]:.2f}")
         )
-    st.dataframe(add_metric_descriptions(fmt), use_container_width=True)
+    render_metrics_table(fmt)
 
     # Weight stability table
     st.caption("Weight Stability (standard deviation over time)")

@@ -10,6 +10,7 @@ import streamlit as st
 from analytics.compare import CompareResult, compare_strategies
 from config import (
     DEFAULT_CVAR_CONFIDENCE,
+    DEFAULT_MAX_GROSS_RATIO,
     DEFAULT_MIN_HEDGE_NAMES,
     DEFAULT_NOTIONAL,
     DEFAULT_RISK_FREE_RATE,
@@ -18,7 +19,7 @@ from config import (
     DEFAULT_WEIGHT_BOUNDS,
 )
 from ui.optimizer import HEDGE_UNIVERSE_OPTIONS, _params_hash
-from ui.style import PLOTLY_LAYOUT, add_metric_descriptions
+from ui.style import PLOTLY_LAYOUT, render_metrics_table
 
 
 def _metrics_table(result: CompareResult) -> pd.DataFrame:
@@ -138,8 +139,18 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
                               help="The ticker you hold long and want to hedge against.")
 
         notional = st.number_input(
-            "Notional ($)", min_value=1000.0, value=DEFAULT_NOTIONAL, step=10000.0, format="%.0f", key="cmp_notional",
+            f"Notional (default ${DEFAULT_NOTIONAL:,.0f})", min_value=1000.0, value=DEFAULT_NOTIONAL, step=1_000_000.0, format="%.0f", key="cmp_notional",
             help="Dollar value of your long position.",
+        )
+
+        max_gross = st.number_input(
+            f"Max hedge notional (default ${DEFAULT_NOTIONAL * DEFAULT_MAX_GROSS_RATIO:,.0f})", min_value=0.0, value=DEFAULT_NOTIONAL * DEFAULT_MAX_GROSS_RATIO,
+            step=1_000_000.0, format="%.0f", key="cmp_max_gross",
+            help="Maximum total dollar value of the hedge portfolio. "
+                 "When set different from notional, the optimizer uses an inequality constraint "
+                 "to find the truly optimal hedge size within this budget — including deploying more "
+                 "than 100% of notional if needed (e.g., for beta-neutral hedging). "
+                 "Set equal to notional for the default fully-allocated hedge (weights sum to -1).",
         )
 
         hedge_universe = st.selectbox(
@@ -149,13 +160,20 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
 
         min_names = st.number_input(
             "Min hedge names", min_value=0, max_value=20, value=DEFAULT_MIN_HEDGE_NAMES, step=1, key="cmp_min_names",
-            help="Minimum number of instruments in the hedge basket.",
+            help="Minimum number of instruments in the hedge basket. "
+                 "Caps max weight per name to 1/N, which may conflict with tight weight bounds — "
+                 "if total capacity (N instruments × effective max weight) < 100%, "
+                 "the optimizer cannot fully allocate the hedge. Set 0 to disable.",
         )
 
         lb = st.number_input("Weight lower bound", value=DEFAULT_WEIGHT_BOUNDS[0], step=0.1, format="%.2f", key="cmp_lb",
-                             help="Minimum weight per hedge instrument. Negative = short positions.")
+                             help="Minimum weight per hedge instrument. Negative = short positions (typical for hedging). "
+                                  "Tightened automatically by min hedge names (capped to -1/N). "
+                                  "Auto-scales when max hedge notional exceeds notional.")
         ub = st.number_input("Weight upper bound", value=DEFAULT_WEIGHT_BOUNDS[1], step=0.1, format="%.2f", key="cmp_ub",
-                             help="Maximum weight per hedge instrument.")
+                             help="Maximum weight per hedge instrument. Set to 0.0 for short-only hedges, "
+                                  "or positive to allow long hedge positions. "
+                                  "Auto-scales when max hedge notional exceeds notional.")
 
         if lb >= ub:
             st.error("Lower bound must be less than upper bound.")
@@ -214,6 +232,18 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
             st.error(f"Min hedge names ({min_names}) exceeds available instruments ({len(hedge_instruments)}).")
             return
 
+        # Warn if bounds + min_names make it impossible to fill the hedge budget
+        if min_names > 0:
+            max_abs_per_name = 1.0 / min_names
+            effective_max = min(max_abs_per_name, max(abs(lb), abs(ub)))
+            total_capacity = len(hedge_instruments) * effective_max
+            if total_capacity < 1.0:
+                st.warning(
+                    f"Weight bounds (max {effective_max:.2f} per name) with {len(hedge_instruments)} "
+                    f"instruments can only reach {total_capacity:.0%} of the hedge budget. "
+                    f"The optimizer may not find a feasible solution. Widen the bounds or reduce min hedge names."
+                )
+
         st.caption(f"Hedge universe ({len(hedge_instruments)}): {', '.join(hedge_instruments)}")
 
         run_compare = st.button("Compare All Strategies", type="primary", use_container_width=True, key="cmp_run")
@@ -237,6 +267,7 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
                         risk_free=risk_free,
                         start_date=pd.Timestamp(bt_start),
                         end_date=pd.Timestamp(bt_end),
+                        max_gross_notional=max_gross if max_gross != notional else None,
                     )
                     st.session_state["compare_result"] = result
                     st.session_state["compare_params_hash"] = _params_hash(params)
@@ -278,7 +309,7 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
         # Metrics table
         st.caption("Performance Metrics (Hedged portfolio for each strategy)")
         formatted = _metrics_table(result)
-        st.dataframe(add_metric_descriptions(formatted), use_container_width=True)
+        render_metrics_table(formatted)
 
         # Ranking table
         rank_df = result.ranking_df.copy()

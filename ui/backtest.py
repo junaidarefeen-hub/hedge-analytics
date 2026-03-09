@@ -15,7 +15,7 @@ from config import (
     REBALANCE_FREQUENCIES,
 )
 from ui.optimizer import _params_hash
-from ui.style import PLOTLY_LAYOUT, add_metric_descriptions
+from ui.style import PLOTLY_LAYOUT, render_metrics_table
 
 
 def _cumulative_chart(result: BacktestResult) -> go.Figure:
@@ -157,7 +157,7 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
             else (f"{int(bt_result.metrics.loc[idx, c])}" if idx in int_rows
                   else f"{bt_result.metrics.loc[idx, c]:.2f}")
         )
-    st.dataframe(add_metric_descriptions(fmt_metrics), use_container_width=True)
+    render_metrics_table(fmt_metrics)
 
     # --- Dynamic Rebalancing Backtest ---
     st.divider()
@@ -207,16 +207,17 @@ def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
                 hedges=hedge_result.hedge_instruments,
                 static_weights=hedge_result.weights,
                 strategy=hedge_result.strategy,
-                bounds=(-1.0, 0.0) if hedge_result.weights[0] <= 0 else (0.0, 1.0),
+                bounds=hedge_result.bounds,
                 rebalance_freq=rebal_freq,
                 lookback_window=lookback,
                 rolling_window=st.session_state.get("bt_roll_window", DEFAULT_ROLLING_VOL_WINDOW),
                 risk_free=st.session_state.get("bt_rf", DEFAULT_RISK_FREE_RATE),
                 factors=list(hedge_result.portfolio_betas.keys()) if hedge_result.portfolio_betas else None,
                 confidence=hedge_result.confidence_level or 0.95,
-                min_names=0,
+                min_names=hedge_result.min_names,
                 notional=hedge_result.target_notional,
                 progress_callback=lambda p: progress.progress(p, text=f"Rebalancing... {p:.0%}"),
+                max_gross_notional=hedge_result.max_gross_notional,
             )
             st.session_state["dynamic_bt_result"] = dyn_result
             progress.empty()
@@ -282,4 +283,4 @@ def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
             else (f"{int(dyn_result.metrics.loc[idx, c])}" if idx in int_rows
                   else f"{dyn_result.metrics.loc[idx, c]:.2f}")
         )
-    st.dataframe(add_metric_descriptions(fmt), use_container_width=True)
+    render_metrics_table(fmt)
