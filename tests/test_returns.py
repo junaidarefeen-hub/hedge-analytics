@@ -31,7 +31,7 @@ class TestComputeReturns:
         ret = compute_returns(prices, method="log")
         assert not ret.isna().all(axis=1).any()
 
-    def test_default_method_is_log(self, prices):
+    def test_default_method_is_simple(self, prices):
         ret_default = compute_returns(prices)
-        ret_log = compute_returns(prices, method="log")
-        pd.testing.assert_frame_equal(ret_default, ret_log)
+        ret_simple = compute_returns(prices, method="simple")
+        pd.testing.assert_frame_equal(ret_default, ret_simple)

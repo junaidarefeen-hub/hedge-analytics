@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from datetime import date, timedelta
 from time import sleep
 
 import pandas as pd
@@ -38,10 +38,11 @@ def validate_and_fetch(
     if not tickers:
         return pd.DataFrame(), tickers
 
+    # yfinance treats `end` as exclusive, so add one day to include the end date
     raw = yf.download(
         tickers,
         start=start.isoformat(),
-        end=end.isoformat(),
+        end=(end + timedelta(days=1)).isoformat(),
         interval=interval,
         auto_adjust=True,
         progress=False,

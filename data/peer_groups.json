@@ -1,8 +1,7 @@
 {
     "stocks": {
-        "FAANG+": "AAPL, MSFT, GOOGL, AMZN, META",
-        "Mag 7": "AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA",
-        "Banks": "JPM, BAC, GS, MS, C, WFC"
+        "Aerospace": "LMT, NOC, BA, HON, GEV, LHX, RTX",
+        "Chemicals": "SOLS, LIN, DD, RPM, ESI, ENTG"
     },
     "factors": {
         "Broad Market": "SPY, QQQ, IWM, XLF, XLE",

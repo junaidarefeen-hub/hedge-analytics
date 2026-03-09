@@ -54,8 +54,8 @@ def prices(rng):
 
 @pytest.fixture()
 def returns(prices):
-    """Log returns from the synthetic prices fixture."""
-    return np.log(prices / prices.shift(1)).dropna(how="all")
+    """Simple (arithmetic) returns from the synthetic prices fixture."""
+    return prices.pct_change().dropna(how="all")
 
 
 @pytest.fixture()

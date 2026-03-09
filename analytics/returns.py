@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def compute_returns(prices: pd.DataFrame, method: str = "log") -> pd.DataFrame:
+def compute_returns(prices: pd.DataFrame, method: str = "simple") -> pd.DataFrame:
     """Compute daily returns from price DataFrame.
 
     Args:
