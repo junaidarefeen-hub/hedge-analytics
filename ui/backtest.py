@@ -231,6 +231,15 @@ def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
         st.info("Configure parameters and click **Run Dynamic Backtest**.")
         return
 
+    # Show effective date range (dynamic period starts after lookback window)
+    dyn_start = dyn_result.cumulative_dynamic.index.min().strftime("%Y-%m-%d")
+    dyn_end = dyn_result.cumulative_dynamic.index.max().strftime("%Y-%m-%d")
+    st.caption(
+        f"Dynamic period: **{dyn_start}** to **{dyn_end}** "
+        f"(starts after lookback window — metrics below cover this period only, "
+        f"which may differ from the static backtest above)"
+    )
+
     # 3-line cumulative return chart
     fig_cum = go.Figure()
     for name, series, color in [

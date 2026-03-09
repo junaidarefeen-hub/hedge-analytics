@@ -77,7 +77,7 @@ def _compute_metrics(
     ann_vol = float(daily.std() * np.sqrt(ann_factor))
     excess = daily - risk_free / ann_factor
     sharpe = float(excess.mean() / daily.std() * np.sqrt(ann_factor)) if daily.std() > 0 else 0.0
-    downside = daily[daily < 0].std()
+    downside = excess[excess < 0].std()
     sortino = float(excess.mean() / downside * np.sqrt(ann_factor)) if downside > 0 else 0.0
     max_dd = _max_drawdown(cumulative)
     calmar = float(ann_return / abs(max_dd)) if max_dd != 0 else 0.0

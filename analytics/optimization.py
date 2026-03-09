@@ -63,8 +63,9 @@ def _multivariate_beta_matrix(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Multivariate OLS betas on a single aligned sample.
 
-    Regresses each ticker on all factors simultaneously, using the same
-    dropna'd sample across all tickers for consistency (betas are additive).
+    Regresses each ticker on all factors simultaneously (with intercept),
+    using the same dropna'd sample across all tickers for consistency
+    (betas are additive).
 
     Returns:
         beta_matrix: shape (n_tickers, n_factors) — row i = betas of tickers[i]
@@ -72,14 +73,17 @@ def _multivariate_beta_matrix(
     """
     all_cols = list(set(tickers + factors))
     clean = returns[all_cols].dropna()
-    X = clean[factors].values  # (T, n_factors)
+    X_raw = clean[factors].values  # (T, n_factors)
+    # Add intercept column to absorb alpha — without it, non-zero mean
+    # returns bias the slope coefficients
+    X = np.column_stack([np.ones(len(X_raw)), X_raw])  # (T, 1 + n_factors)
 
     beta_matrix = np.zeros((len(tickers), len(factors)))
     for i, tk in enumerate(tickers):
         y = clean[tk].values
-        betas, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-        beta_matrix[i] = betas
-    return beta_matrix, X
+        coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+        beta_matrix[i] = coeffs[1:]  # skip intercept, keep factor betas
+    return beta_matrix, X_raw
 
 
 def _weight_sum_constraint(
@@ -265,11 +269,8 @@ def optimize_cvar(
         options={"maxiter": 500, "ftol": 1e-12},
     )
     w_opt = res.x[:n_hedge]
-    # Compute final CVaR
+    # Compute final CVaR: mean of losses exceeding the VaR threshold
     port_returns = r_target + r_hedges @ w_opt
-    var_level = np.percentile(-port_returns, confidence * 100)
-    cvar = float(np.mean(-port_returns[-port_returns >= -var_level]) if np.any(-port_returns >= var_level) else var_level)
-    # Simpler: recompute from losses exceeding VaR
     losses = -port_returns
     cvar = float(np.mean(losses[losses >= np.percentile(losses, confidence * 100)]))
     return w_opt, cvar

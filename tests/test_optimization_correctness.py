@@ -181,22 +181,22 @@ class TestBetaNeutralCorrectness:
             returns, "AAPL", hedges, factors, (-1.0, 0.0),
         )
 
-        # Independently compute portfolio beta using no-intercept OLS
-        # (matching _multivariate_beta_matrix which uses lstsq without intercept)
+        # Independently compute portfolio beta using OLS with intercept
+        # (matching _multivariate_beta_matrix)
         all_cols = list(dict.fromkeys(["AAPL"] + hedges + factors))  # dedupe, preserve order
         clean = returns[all_cols].dropna()
         port_returns = clean["AAPL"].values + clean[hedges].values @ w
-        X = clean[factors].values
+        X = np.column_stack([np.ones(len(clean)), clean[factors].values])
 
-        betas, _, _, _ = np.linalg.lstsq(X, port_returns, rcond=None)
-        portfolio_beta = betas[0]
+        coeffs, _, _, _ = np.linalg.lstsq(X, port_returns, rcond=None)
+        portfolio_beta = coeffs[1]  # skip intercept
 
         if feasible:
             np.testing.assert_allclose(portfolio_beta, 0.0, atol=0.05)
         else:
             # Soft constraint — beta should at least be reduced
-            betas_uh, _, _, _ = np.linalg.lstsq(X, clean["AAPL"].values, rcond=None)
-            assert abs(portfolio_beta) < abs(betas_uh[0])
+            coeffs_uh, _, _, _ = np.linalg.lstsq(X, clean["AAPL"].values, rcond=None)
+            assert abs(portfolio_beta) < abs(coeffs_uh[1])
 
     def test_multi_factor_betas_near_zero(self, returns):
         hedges = ["MSFT", "SPY", "QQQ", "XLE"]
@@ -205,13 +205,14 @@ class TestBetaNeutralCorrectness:
             returns, "AAPL", hedges, factors, (-1.0, 0.0),
         )
 
-        # Independent multivariate OLS (no intercept, matching _multivariate_beta_matrix)
+        # Independent multivariate OLS with intercept (matching _multivariate_beta_matrix)
         all_cols = list(dict.fromkeys(["AAPL"] + hedges + factors))
         clean = returns[all_cols].dropna()
         port_returns = clean["AAPL"].values + clean[hedges].values @ w
-        X = clean[factors].values
+        X = np.column_stack([np.ones(len(clean)), clean[factors].values])
 
-        betas, _, _, _ = np.linalg.lstsq(X, port_returns, rcond=None)
+        coeffs, _, _, _ = np.linalg.lstsq(X, port_returns, rcond=None)
+        betas = coeffs[1:]  # skip intercept
 
         if feasible:
             for j, f in enumerate(factors):
@@ -472,16 +473,22 @@ class TestBetaMatrixCrossCheck:
         factors = ["SPY", "QQQ"]
         beta_mat, X = _multivariate_beta_matrix(returns, tickers, factors)
 
-        # Manual OLS for AAPL
+        # Manual OLS for AAPL (with intercept, matching _multivariate_beta_matrix)
         clean = returns[tickers + factors].dropna()
-        X_manual = clean[factors].values
+        X_manual = np.column_stack([np.ones(len(clean)), clean[factors].values])
         y_aapl = clean["AAPL"].values
-        betas_manual, _, _, _ = np.linalg.lstsq(X_manual, y_aapl, rcond=None)
+        coeffs, _, _, _ = np.linalg.lstsq(X_manual, y_aapl, rcond=None)
+        betas_manual = coeffs[1:]  # skip intercept
 
         np.testing.assert_allclose(beta_mat[0], betas_manual, rtol=1e-8)
 
     def test_beta_additivity(self, returns):
-        """Portfolio beta should equal target_beta + w @ hedge_betas."""
+        """Portfolio beta should equal target_beta + w @ hedge_betas.
+
+        With intercept-based OLS, betas are additive: the portfolio beta
+        from combining individual betas matches a direct regression on
+        the portfolio returns (both with intercept).
+        """
         hedges = ["MSFT", "QQQ", "XLE"]
         factors = ["SPY"]
         w = np.array([-0.3, -0.4, -0.3])
@@ -494,12 +501,13 @@ class TestBetaMatrixCrossCheck:
         hedge_betas = beta_mat[1:, 0]
         port_beta_additive = target_beta + w @ hedge_betas
 
-        # Portfolio beta via direct OLS on portfolio returns (deduplicated columns)
+        # Portfolio beta via direct OLS on portfolio returns (with intercept)
         all_cols = list(dict.fromkeys(["AAPL"] + hedges + factors))
         clean = returns[all_cols].dropna()
         port_returns = clean["AAPL"].values + clean[hedges].values @ w
-        X = clean[factors].values
-        port_beta_direct, _, _, _ = np.linalg.lstsq(X, port_returns, rcond=None)
+        X = np.column_stack([np.ones(len(clean)), clean[factors].values])
+        coeffs, _, _, _ = np.linalg.lstsq(X, port_returns, rcond=None)
+        port_beta_direct = coeffs[1:]  # skip intercept
 
         np.testing.assert_allclose(
             port_beta_additive, port_beta_direct[0], atol=1e-8,
