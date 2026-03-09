@@ -268,7 +268,7 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
                     confidence=confidence,
                     min_names=min_names,
                     rolling_window=params["window"],
-                    max_gross_notional=max_gross if max_gross != notional else None,
+                    max_gross_notional=max_gross,
                 )
                 st.session_state["hedge_result"] = result
                 st.session_state["hedge_params_hash"] = _params_hash(params)

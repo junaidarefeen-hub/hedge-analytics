@@ -91,4 +91,4 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - Theme: blue primary (#2563eb), configured in `.streamlit/config.toml`
 - Rolling optimization and dynamic rebalancing use radio toggles (static vs dynamic) within their respective tabs
 - Late import of `optimize_hedge` in `run_dynamic_backtest()` to avoid circular dependency (backtest ↔ optimization)
-- `max_gross_notional` propagates through: `optimize_hedge` → `compare_strategies` / `rolling_optimize` / `run_dynamic_backtest`; UI passes `None` when max_gross == notional (no cap) to preserve default equality behavior
+- `max_gross_notional` propagates through: `optimize_hedge` → `compare_strategies` / `rolling_optimize` / `run_dynamic_backtest`; UI always passes the actual max_gross value (inequality mode) so the optimizer can freely choose the optimal hedge size up to the cap

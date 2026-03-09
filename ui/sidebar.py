@@ -56,16 +56,22 @@ def _save_peer_groups(groups: dict):
         json.dump(groups, f, indent=4)
 
 
-def _render_peer_group_controls(section: str, current_tickers: str, key_prefix: str) -> str | None:
+def _render_peer_group_controls(section: str, current_tickers: str, key_prefix: str) -> None:
     """Render load/save/delete controls for a peer group section.
 
-    Returns the ticker string to load, or None to keep current.
+    When the user selects a group, stores the tickers in a pending key
+    (consumed before the widget renders on the next rerun) and resets
+    the selectbox to avoid infinite rerun loops.
     """
     groups = _load_peer_groups()
     section_groups = groups.get(section, {})
     group_names = list(section_groups.keys())
 
-    loaded_value = None
+    select_key = f"{key_prefix}_load"
+
+    # Reset selectbox before it renders (deferred from previous rerun)
+    if st.session_state.pop(f"{key_prefix}_reset_select", False):
+        st.session_state[select_key] = ""
 
     if group_names:
         col_load, col_del = st.columns([3, 1])
@@ -74,7 +80,7 @@ def _render_peer_group_controls(section: str, current_tickers: str, key_prefix: 
                 "Load saved group",
                 options=[""] + group_names,
                 index=0,
-                key=f"{key_prefix}_load",
+                key=select_key,
                 help="Select a saved group to load its tickers.",
                 label_visibility="collapsed",
                 placeholder="Load saved group...",
@@ -88,7 +94,11 @@ def _render_peer_group_controls(section: str, current_tickers: str, key_prefix: 
                     st.rerun()
 
         if selected and selected in section_groups:
-            loaded_value = section_groups[selected]
+            # Stage the load and selectbox reset for next rerun
+            # (can't modify widget keys after instantiation)
+            st.session_state[f"{key_prefix}_pending"] = section_groups[selected]
+            st.session_state[f"{key_prefix}_reset_select"] = True
+            st.rerun()
 
     # Save controls
     col_name, col_save = st.columns([3, 1])
@@ -108,50 +118,45 @@ def _render_peer_group_controls(section: str, current_tickers: str, key_prefix: 
                 st.success(f"Saved '{save_name.strip()}'")
                 st.rerun()
 
-    return loaded_value
-
 
 def render_sidebar() -> dict | None:
     """Render all sidebar inputs and return a params dict, or None if inputs are invalid."""
     with st.sidebar:
         st.header("Settings")
 
-        # Apply any pending peer group loads before widgets render
-        # (must set widget key in session_state before the widget is created)
-        if st.session_state.get("_load_stock_tickers"):
-            st.session_state["stock_tickers"] = st.session_state.pop("_load_stock_tickers")
-        if st.session_state.get("_load_factor_tickers"):
-            st.session_state["factor_tickers"] = st.session_state.pop("_load_factor_tickers")
+        # Seed defaults on first run only
+        if "stock_tickers" not in st.session_state:
+            st.session_state["stock_tickers"] = DEFAULT_STOCK_TICKERS
+        if "factor_tickers" not in st.session_state:
+            st.session_state["factor_tickers"] = DEFAULT_FACTOR_TICKERS
+
+        # Apply pending peer group loads BEFORE widgets render
+        if "pg_stocks_pending" in st.session_state:
+            st.session_state["stock_tickers"] = st.session_state.pop("pg_stocks_pending")
+        if "pg_factors_pending" in st.session_state:
+            st.session_state["factor_tickers"] = st.session_state.pop("pg_factors_pending")
 
         # --- Stock tickers ---
         st.subheader("Stocks / ETFs")
         raw_stocks = st.text_area(
             "Stock tickers (comma-separated)",
-            value=DEFAULT_STOCK_TICKERS,
             help="Enter US stock or ETF tickers separated by commas.",
             key="stock_tickers",
         )
         stock_tickers = parse_tickers(raw_stocks)
 
-        loaded = _render_peer_group_controls("stocks", raw_stocks, "pg_stocks")
-        if loaded is not None:
-            st.session_state["_load_stock_tickers"] = loaded
-            st.rerun()
+        _render_peer_group_controls("stocks", raw_stocks, "pg_stocks")
 
         # --- Factor / Index tickers ---
         st.subheader("Factors / Indices")
         raw_factors = st.text_area(
             "Factor & index tickers (comma-separated)",
-            value=DEFAULT_FACTOR_TICKERS,
             help="Enter factor ETFs, sector ETFs, or index tickers (e.g. SPY, QQQ, IWM, XLF).",
             key="factor_tickers",
         )
         factor_tickers = parse_tickers(raw_factors)
 
-        loaded = _render_peer_group_controls("factors", raw_factors, "pg_factors")
-        if loaded is not None:
-            st.session_state["_load_factor_tickers"] = loaded
-            st.rerun()
+        _render_peer_group_controls("factors", raw_factors, "pg_factors")
 
         # Deduplicate across both lists (factor list wins if overlap)
         stock_tickers = [t for t in stock_tickers if t not in factor_tickers]

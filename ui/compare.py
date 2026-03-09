@@ -267,7 +267,7 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
                         risk_free=risk_free,
                         start_date=pd.Timestamp(bt_start),
                         end_date=pd.Timestamp(bt_end),
-                        max_gross_notional=max_gross if max_gross != notional else None,
+                        max_gross_notional=max_gross,
                     )
                     st.session_state["compare_result"] = result
                     st.session_state["compare_params_hash"] = _params_hash(params)
