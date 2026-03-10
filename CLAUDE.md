@@ -74,6 +74,8 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - Reuses `_compute_metrics()`, `_tracking_error()`, `_information_ratio()` from `analytics/backtest.py`
 - Independent of optimizer session state — fully self-contained tab
 - **Net beta**: single-benchmark univariate `cov/var`, decomposed per hedge instrument with effective hedge ratios (`hedge_ratio × weight`). Benchmark selection limited to hedge constituents (selectbox, not multiselect) to avoid confusing multivariate partitioning effects
+- **Live net beta**: `compute_net_beta()` runs on every Streamlit rerun (no Analyze click needed) — metric cards for long beta, per-instrument contribution, and net beta update live as user changes notionals, tickers, or weights. Enables quick beta-neutral portfolio construction
+- **Rolling net beta**: computed inside `run_custom_hedge_analysis()` using rolling `cov/var`; chart shows beta-neutral zero line and full-period reference line
 - **Weights**: auto-reset to equal weight when tickers change; normalize button uses deferred flag + `st.rerun()` to avoid Streamlit's "cannot modify session_state after widget instantiation" error
 
 ### `analytics/drawdown.py` — Drawdown period detection

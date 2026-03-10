@@ -7,7 +7,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from analytics.custom_hedge import CustomHedgeResult, run_custom_hedge_analysis
+from analytics.custom_hedge import (
+    CustomHedgeResult,
+    compute_net_beta,
+    run_custom_hedge_analysis,
+)
 from analytics.drawdown import compute_drawdowns
 from config import (
     CHA_DEFAULT_HEDGE_NOTIONAL,
@@ -208,7 +212,7 @@ def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
                      "Shows how much exposure to this instrument remains after hedging.",
             )
 
-    # ── Run Button ────────────────────────────────────────────────────────
+    # ── Early exit if portfolios incomplete ───────────────────────────────
     if not long_tickers:
         st.info("Select at least one long ticker to begin.")
         return
@@ -218,7 +222,42 @@ def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
 
     long_w_arr = np.array([long_weights_raw[tk] for tk in long_tickers]) / 100.0
     hedge_w_arr = np.array([hedge_weights_raw[tk] for tk in hedge_tickers]) / 100.0
+    hedge_ratio = hedge_notional / long_notional if long_notional > 0 else 0.0
 
+    # ── Live Net Beta (updates without clicking Analyze) ──────────────────
+    if selected_benchmark:
+        live = compute_net_beta(
+            returns=returns,
+            long_tickers=long_tickers,
+            long_weights=long_w_arr,
+            hedge_tickers=hedge_tickers,
+            hedge_weights=hedge_w_arr,
+            hedge_ratio=hedge_ratio,
+            benchmark=selected_benchmark,
+            start_date=pd.Timestamp(cha_start),
+            end_date=pd.Timestamp(cha_end),
+        )
+        if live is not None:
+            beta_cols = st.columns(2 + len(live["instruments"]))
+            beta_cols[0].metric(
+                f"Long Beta ({selected_benchmark})",
+                f"{live['long_beta']:.3f}",
+            )
+            for i, inst in enumerate(live["instruments"]):
+                beta_cols[1 + i].metric(
+                    f"{inst['ticker']} contribution",
+                    f"{inst['contribution']:+.3f}",
+                    help=f"Beta: {inst['beta']:.3f} | Eff. ratio: {inst['eff_ratio']:.3f}",
+                )
+            net_val = live["net_beta"]
+            beta_cols[-1].metric(
+                f"Net Beta ({selected_benchmark})",
+                f"{net_val:+.3f}",
+                delta=f"{'neutral' if abs(net_val) < 0.05 else ''}",
+                delta_color="off" if abs(net_val) < 0.05 else ("inverse" if net_val > 0 else "normal"),
+            )
+
+    # ── Run Button ────────────────────────────────────────────────────────
     run_analysis = st.button("Analyze", type="primary", use_container_width=True, key="cha_run")
 
     if run_analysis:
@@ -248,10 +287,14 @@ def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
         return
 
     # ── Results ───────────────────────────────────────────────────────────
-    _render_results(result, rolling_window)
+    _render_results(result, rolling_window, selected_benchmark)
 
 
-def _render_results(result: CustomHedgeResult, rolling_window: int):
+def _render_results(
+    result: CustomHedgeResult,
+    rolling_window: int,
+    selected_benchmark: str | None,
+):
     """Render all result sections."""
     # 1. Summary metric cards
     standalone_vol = result.metrics.loc["Ann. Volatility", "Standalone"]
@@ -292,7 +335,14 @@ def _render_results(result: CustomHedgeResult, rolling_window: int):
     # 5. Rolling correlation chart
     st.plotly_chart(_rolling_corr_chart(result, rolling_window), use_container_width=True)
 
-    # 6. Drawdown comparison
+    # 6. Rolling net beta chart
+    if result.rolling_net_beta is not None and selected_benchmark:
+        st.plotly_chart(
+            _rolling_net_beta_chart(result, rolling_window, selected_benchmark),
+            use_container_width=True,
+        )
+
+    # 7. Drawdown comparison
     st.subheader("Drawdown Comparison")
     dd_standalone = compute_drawdowns(result.cumulative_standalone)
     dd_hedged = compute_drawdowns(result.cumulative_hedged)
@@ -301,11 +351,11 @@ def _render_results(result: CustomHedgeResult, rolling_window: int):
         use_container_width=True,
     )
 
-    # 7. P&L attribution chart
+    # 8. P&L attribution chart
     st.subheader("P&L Attribution")
     st.plotly_chart(_attribution_chart(result), use_container_width=True)
 
-    # 8. Net beta table
+    # 9. Net beta table
     if len(result.beta_table) > 0:
         st.subheader("Net Portfolio Beta")
         st.dataframe(result.beta_table, use_container_width=True, hide_index=True)
@@ -404,6 +454,45 @@ def _rolling_corr_chart(result: CustomHedgeResult, window: int) -> go.Figure:
         xaxis_title="",
         yaxis_title="Correlation",
         yaxis=dict(range=[-1.05, 1.05]),
+        height=380,
+        showlegend=False,
+    )
+    return fig
+
+
+def _rolling_net_beta_chart(
+    result: CustomHedgeResult, window: int, benchmark: str,
+) -> go.Figure:
+    series = result.rolling_net_beta.dropna()
+    # Full-period net beta from the table
+    full_net = None
+    if len(result.beta_table) > 0:
+        net_rows = result.beta_table[result.beta_table["Component"] == "Net Portfolio"]
+        if len(net_rows) > 0:
+            full_net = net_rows.iloc[0]["Beta Contribution"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=series.index,
+        y=series.values,
+        mode="lines",
+        name="Net Beta",
+        line=dict(width=2, color="#7c3aed"),
+        hovertemplate="%{x|%b %d, %Y}<br>Net Beta: %{y:.3f}<extra></extra>",
+    ))
+    # Zero line (beta-neutral reference)
+    fig.add_hline(y=0, line_dash="dash", line_color="#dc2626", line_width=1,
+                  annotation_text="Beta-neutral",
+                  annotation_position="top left")
+    if full_net is not None:
+        fig.add_hline(y=full_net, line_dash="dot", line_color="#64748b", line_width=1,
+                      annotation_text=f"Full-period: {full_net:.3f}",
+                      annotation_position="bottom left")
+    fig.update_layout(**PLOTLY_LAYOUT)
+    fig.update_layout(
+        title=f"{window}-Day Rolling Net Beta to {benchmark}",
+        xaxis_title="",
+        yaxis_title="Net Beta",
         height=380,
         showlegend=False,
     )

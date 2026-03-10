@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from analytics.custom_hedge import CustomHedgeResult, run_custom_hedge_analysis
+from analytics.custom_hedge import CustomHedgeResult, compute_net_beta, run_custom_hedge_analysis
 
 
 class TestCustomHedgeBasic:
@@ -389,3 +389,173 @@ class TestCustomHedgeDateFiltering:
         )
         assert result.daily_standalone.index.min() >= start
         assert result.daily_standalone.index.max() <= end
+
+
+class TestComputeNetBeta:
+    """Tests for the lightweight live net beta computation."""
+
+    def test_basic_net_beta(self, returns):
+        """compute_net_beta returns correct keys and valid values."""
+        live = compute_net_beta(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_ratio=0.5,
+            benchmark="QQQ",
+        )
+        assert live is not None
+        assert "long_beta" in live
+        assert "net_beta" in live
+        assert "instruments" in live
+        assert len(live["instruments"]) == 1
+        assert live["instruments"][0]["ticker"] == "SPY"
+
+    def test_net_beta_matches_full_analysis(self, returns):
+        """Live net beta should match the full analysis beta table."""
+        hedge_ratio = 0.5
+        result = run_custom_hedge_analysis(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            long_notional=10_000_000.0,
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_notional=5_000_000.0,
+            benchmarks=["QQQ"],
+        )
+        live = compute_net_beta(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_ratio=hedge_ratio,
+            benchmark="QQQ",
+        )
+        bt = result.beta_table
+        net_row = bt[bt["Component"] == "Net Portfolio"].iloc[0]
+        assert live["net_beta"] == pytest.approx(net_row["Beta Contribution"], abs=1e-3)
+
+    def test_missing_ticker_returns_none(self, returns):
+        """Missing ticker should return None, not raise."""
+        live = compute_net_beta(
+            returns=returns,
+            long_tickers=["NONEXISTENT"],
+            long_weights=np.array([1.0]),
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_ratio=1.0,
+            benchmark="QQQ",
+        )
+        assert live is None
+
+    def test_date_filtering(self, returns):
+        """Date filtering should narrow the computation window."""
+        start = returns.index[50]
+        end = returns.index[200]
+        live = compute_net_beta(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_ratio=1.0,
+            benchmark="QQQ",
+            start_date=start,
+            end_date=end,
+        )
+        assert live is not None
+        # Result should be different from full-period (different data window)
+        full = compute_net_beta(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_ratio=1.0,
+            benchmark="QQQ",
+        )
+        # Not guaranteed to differ much, but both should be valid
+        assert full is not None
+
+    def test_multi_instrument_effective_ratios(self, returns):
+        """Per-instrument effective ratios should match hedge_ratio * weight."""
+        live = compute_net_beta(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            hedge_tickers=["SPY", "QQQ"],
+            hedge_weights=np.array([0.6, 0.4]),
+            hedge_ratio=0.5,
+            benchmark="XLE",
+        )
+        assert live is not None
+        assert live["instruments"][0]["eff_ratio"] == pytest.approx(0.3, abs=1e-10)
+        assert live["instruments"][1]["eff_ratio"] == pytest.approx(0.2, abs=1e-10)
+
+    def test_net_beta_is_sum_of_contributions(self, returns):
+        """net_beta should equal long_beta + sum of instrument contributions."""
+        live = compute_net_beta(
+            returns=returns,
+            long_tickers=["AAPL", "MSFT"],
+            long_weights=np.array([0.6, 0.4]),
+            hedge_tickers=["SPY", "QQQ"],
+            hedge_weights=np.array([0.5, 0.5]),
+            hedge_ratio=0.5,
+            benchmark="XLE",
+        )
+        assert live is not None
+        expected = live["long_beta"] + sum(i["contribution"] for i in live["instruments"])
+        assert live["net_beta"] == pytest.approx(expected, abs=1e-10)
+
+
+class TestRollingNetBeta:
+    """Tests for the rolling net beta computation in full analysis."""
+
+    def test_rolling_net_beta_present_with_benchmark(self, returns):
+        """Rolling net beta should be present when benchmarks are specified."""
+        result = run_custom_hedge_analysis(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            long_notional=10_000_000.0,
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_notional=5_000_000.0,
+            benchmarks=["QQQ"],
+            rolling_window=60,
+        )
+        assert result.rolling_net_beta is not None
+        assert len(result.rolling_net_beta) == len(result.daily_standalone)
+
+    def test_rolling_net_beta_none_without_benchmark(self, returns):
+        """Rolling net beta should be None when no benchmarks specified."""
+        result = run_custom_hedge_analysis(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            long_notional=10_000_000.0,
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_notional=10_000_000.0,
+        )
+        assert result.rolling_net_beta is None
+
+    def test_rolling_net_beta_has_valid_values(self, returns):
+        """Non-NaN rolling net beta values should be finite."""
+        result = run_custom_hedge_analysis(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            long_notional=10_000_000.0,
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_notional=5_000_000.0,
+            benchmarks=["QQQ"],
+            rolling_window=60,
+        )
+        valid = result.rolling_net_beta.dropna()
+        assert len(valid) > 0
+        assert np.all(np.isfinite(valid))

@@ -56,6 +56,72 @@ class CustomHedgeResult:
     # Constituent P&L contributions
     constituent_contributions: pd.DataFrame
 
+    # Rolling net beta to benchmark (None if no benchmark selected)
+    rolling_net_beta: pd.Series | None
+
+
+def compute_net_beta(
+    returns: pd.DataFrame,
+    long_tickers: list[str],
+    long_weights: np.ndarray,
+    hedge_tickers: list[str],
+    hedge_weights: np.ndarray,
+    hedge_ratio: float,
+    benchmark: str,
+    start_date: pd.Timestamp | None = None,
+    end_date: pd.Timestamp | None = None,
+) -> dict:
+    """Lightweight net beta computation for live display (no full analysis).
+
+    Returns dict with keys: long_beta, net_beta, and per-instrument entries.
+    Returns None if computation fails.
+    """
+    long_weights = np.asarray(long_weights, dtype=float)
+    hedge_weights = np.asarray(hedge_weights, dtype=float)
+
+    all_cols = list(set(long_tickers + hedge_tickers + [benchmark]))
+    missing = set(all_cols) - set(returns.columns)
+    if missing:
+        return None
+
+    clean = returns[all_cols].dropna()
+    if start_date is not None:
+        clean = clean[clean.index >= pd.Timestamp(start_date)]
+    if end_date is not None:
+        clean = clean[clean.index <= pd.Timestamp(end_date)]
+
+    if len(clean) < 2:
+        return None
+
+    daily_standalone = clean[long_tickers].values @ long_weights
+    bm_ret = clean[benchmark].values
+    bm_var = float(np.var(bm_ret, ddof=1))
+    if bm_var <= 0:
+        return None
+
+    long_beta = float(np.cov(daily_standalone, bm_ret, ddof=1)[0, 1] / bm_var)
+
+    instruments = []
+    running_hedge_contrib = 0.0
+    for i, tk in enumerate(hedge_tickers):
+        tk_ret = clean[tk].values
+        tk_beta = float(np.cov(tk_ret, bm_ret, ddof=1)[0, 1] / bm_var)
+        eff_ratio = hedge_ratio * hedge_weights[i]
+        contribution = -eff_ratio * tk_beta
+        running_hedge_contrib += contribution
+        instruments.append({
+            "ticker": tk,
+            "beta": tk_beta,
+            "eff_ratio": eff_ratio,
+            "contribution": contribution,
+        })
+
+    return {
+        "long_beta": long_beta,
+        "net_beta": long_beta + running_hedge_contrib,
+        "instruments": instruments,
+    }
+
 
 def run_custom_hedge_analysis(
     returns: pd.DataFrame,
@@ -221,6 +287,26 @@ def run_custom_hedge_analysis(
         columns=["Component", "Beta", "Eff. Hedge Ratio", "Beta Contribution"],
     )
 
+    # Rolling net beta to benchmark
+    rolling_net_beta = None
+    if benchmarks:
+        bm = benchmarks[0]
+        if bm in clean.columns:
+            bm_ret = clean[bm]
+            roll_bm_var = bm_ret.rolling(
+                window=rolling_window, min_periods=rolling_window,
+            ).var()
+            roll_long_beta = daily_standalone.rolling(
+                window=rolling_window, min_periods=rolling_window,
+            ).cov(bm_ret) / roll_bm_var
+            roll_net = roll_long_beta.copy()
+            for i, tk in enumerate(hedge_tickers):
+                roll_tk_beta = clean[tk].rolling(
+                    window=rolling_window, min_periods=rolling_window,
+                ).cov(bm_ret) / roll_bm_var
+                roll_net = roll_net - (hedge_ratio * hedge_weights[i]) * roll_tk_beta
+            rolling_net_beta = roll_net
+
     # Hedge efficiency: vol reduction % / |return sacrifice %|
     standalone_return = m_standalone["Ann. Return"]
     hedged_return = m_hedged["Ann. Return"]
@@ -261,4 +347,5 @@ def run_custom_hedge_analysis(
         beta_table=beta_table,
         hedge_efficiency=hedge_efficiency,
         constituent_contributions=constituent_contributions,
+        rolling_net_beta=rolling_net_beta,
     )
