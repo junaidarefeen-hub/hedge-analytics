@@ -15,6 +15,7 @@ from ui.sidebar import render_sidebar
 from ui.style import inject_css
 from ui.backtest import render_backtest_tab
 from ui.compare import render_compare_tab
+from ui.custom_hedge import render_custom_hedge_tab
 from ui.montecarlo import render_montecarlo_tab
 from ui.optimizer import render_optimizer_tab
 from ui.stress import render_stress_tab
@@ -71,8 +72,8 @@ if sufficiency_warn:
     st.warning(sufficiency_warn)
 
 # Tabs
-tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime = st.tabs(
-    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime"]
+tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_custom, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime = st.tabs(
+    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Custom Hedge", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime"]
 )
 
 # --- Data Tab ---
@@ -185,6 +186,10 @@ with tab_optim:
 # --- Strategy Compare ---
 with tab_compare:
     render_compare_tab(returns, params)
+
+# --- Custom Hedge ---
+with tab_custom:
+    render_custom_hedge_tab(returns, params)
 
 # --- Backtest ---
 with tab_backtest:

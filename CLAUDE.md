@@ -20,7 +20,7 @@ Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, sc
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
-- `app.py` — Entry point, 10-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Backtest, Monte Carlo, Stress Test, Drawdown, Regime)
+- `app.py` — Entry point, 11-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Custom Hedge, Backtest, Monte Carlo, Stress Test, Drawdown, Regime)
 - `config.py` — All defaults and constants (tickers, dates, strategies, bounds, intervals, regime/rolling params)
 - `ui/sidebar.py` — Returns `params` dict consumed by all tabs. Includes interval selector, cache clear button, and peer group load/save/delete.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
@@ -33,6 +33,7 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
   ├─ Beta tab → heatmap + rolling chart
   ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state; toggle for rolling optimization
   ├─ Compare tab → compare_strategies() → 4 strategies + backtests → CompareResult
+  ├─ Custom Hedge tab → run_custom_hedge_analysis() → CustomHedgeResult (standalone, no session_state bridge)
   ├─ Backtest tab → run_backtest() → BacktestResult; toggle for dynamic rebalancing
   ├─ Monte Carlo tab → run_monte_carlo() → MonteCarloResult
   ├─ Stress Test tab → run_stress_test() → StressTestResult
@@ -66,6 +67,14 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 ### `analytics/rolling_optimization.py` — Walk-forward optimization
 - Slides window at `step` intervals, calls `optimize_hedge()` at each point
 - Outputs weight evolution, vol history, turnover, weight stability
+
+### `analytics/custom_hedge.py` — Custom multi-asset hedge analysis
+- User-defined long/hedge portfolios with custom weights, notionals, and date range
+- `run_custom_hedge_analysis()`: daily standalone/hedged returns, rolling vol/correlation, per-instrument net beta decomposition, hedge efficiency, constituent P&L contributions
+- Reuses `_compute_metrics()`, `_tracking_error()`, `_information_ratio()` from `analytics/backtest.py`
+- Independent of optimizer session state — fully self-contained tab
+- **Net beta**: single-benchmark univariate `cov/var`, decomposed per hedge instrument with effective hedge ratios (`hedge_ratio × weight`). Benchmark selection limited to hedge constituents (selectbox, not multiselect) to avoid confusing multivariate partitioning effects
+- **Weights**: auto-reset to equal weight when tickers change; normalize button uses deferred flag + `st.rerun()` to avoid Streamlit's "cannot modify session_state after widget instantiation" error
 
 ### `analytics/drawdown.py` — Drawdown period detection
 - `compute_drawdowns()`: identifies contiguous underwater spans from cumulative series

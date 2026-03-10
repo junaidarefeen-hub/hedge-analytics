@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 DEFAULT_STOCK_TICKERS = "AAPL, MSFT, GOOGL, AMZN, META"
-DEFAULT_FACTOR_TICKERS = "SPY, QQQ, IWM, XLF, XLE"
+DEFAULT_FACTOR_TICKERS = "SPY"
 DEFAULT_LOOKBACK_YEARS = 3
 DEFAULT_START_DATE = date.today() - timedelta(days=365 * DEFAULT_LOOKBACK_YEARS)
 DEFAULT_END_DATE = date.today()
@@ -106,6 +106,10 @@ REGIME_METHODS = ["quantile", "kmeans"]
 # Rolling optimization
 ROLLING_OPT_WINDOW = 120
 ROLLING_OPT_STEP = 20
+
+# Custom Hedge Analyzer
+CHA_DEFAULT_LONG_NOTIONAL = 10_000_000.0
+CHA_DEFAULT_HEDGE_NOTIONAL = 10_000_000.0
 
 # Dynamic rebalancing backtest
 REBALANCE_FREQUENCIES = ["weekly", "monthly", "quarterly"]
