@@ -59,6 +59,9 @@ class CustomHedgeResult:
     # Rolling net beta to benchmark (None if no benchmark selected)
     rolling_net_beta: pd.Series | None
 
+    # Which benchmark was used for beta computations (None if no benchmark)
+    beta_benchmark: str | None
+
 
 def compute_net_beta(
     returns: pd.DataFrame,
@@ -348,4 +351,5 @@ def run_custom_hedge_analysis(
         hedge_efficiency=hedge_efficiency,
         constituent_contributions=constituent_contributions,
         rolling_net_beta=rolling_net_beta,
+        beta_benchmark=benchmarks[0] if benchmarks else None,
     )

@@ -301,16 +301,19 @@ def _render_results(
     hedged_vol = result.metrics.loc["Ann. Volatility", "Hedged"]
     vol_reduction = result.metrics.loc["Vol Reduction", "Hedged"]
     net_beta_str = "N/A"
+    net_beta_label = "Net Beta"
     if len(result.beta_table) > 0:
         net_rows = result.beta_table[result.beta_table["Component"] == "Net Portfolio"]
         if len(net_rows) > 0:
             net_beta_str = f"{net_rows.iloc[0]['Beta Contribution']:.3f}"
+        if result.beta_benchmark:
+            net_beta_label = f"Net Beta ({result.beta_benchmark})"
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Standalone Vol (ann.)", f"{standalone_vol:.1%}")
     m2.metric("Hedged Vol (ann.)", f"{hedged_vol:.1%}")
     m3.metric("Vol Reduction", f"{vol_reduction:.1%}")
-    m4.metric("Net Beta", net_beta_str)
+    m4.metric(net_beta_label, net_beta_str)
 
     # 2. Performance metrics table
     st.subheader("Performance Metrics")
@@ -335,10 +338,17 @@ def _render_results(
     # 5. Rolling correlation chart
     st.plotly_chart(_rolling_corr_chart(result, rolling_window), use_container_width=True)
 
-    # 6. Rolling net beta chart
-    if result.rolling_net_beta is not None and selected_benchmark:
+    # 6. Rolling net beta chart — only show if benchmark hasn't changed since Analyze
+    beta_bm = result.beta_benchmark
+    benchmark_stale = selected_benchmark != beta_bm
+    if result.rolling_net_beta is not None and beta_bm:
+        if benchmark_stale:
+            st.caption(
+                f"Rolling net beta was computed against **{beta_bm}**. "
+                f"Click **Analyze** to update for **{selected_benchmark}**."
+            )
         st.plotly_chart(
-            _rolling_net_beta_chart(result, rolling_window, selected_benchmark),
+            _rolling_net_beta_chart(result, rolling_window, beta_bm),
             use_container_width=True,
         )
 
@@ -355,9 +365,15 @@ def _render_results(
     st.subheader("P&L Attribution")
     st.plotly_chart(_attribution_chart(result), use_container_width=True)
 
-    # 9. Net beta table
+    # 9. Net beta table — label with the benchmark it was computed against
     if len(result.beta_table) > 0:
-        st.subheader("Net Portfolio Beta")
+        bm_label = f" (vs {beta_bm})" if beta_bm else ""
+        st.subheader(f"Net Portfolio Beta{bm_label}")
+        if benchmark_stale:
+            st.caption(
+                f"Table was computed against **{beta_bm}**. "
+                f"Click **Analyze** to update for **{selected_benchmark}**."
+            )
         st.dataframe(result.beta_table, use_container_width=True, hide_index=True)
 
     # Hedge efficiency

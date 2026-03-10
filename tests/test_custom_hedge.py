@@ -271,6 +271,21 @@ class TestCustomHedgeBeta:
             hedge_notional=10_000_000.0,
         )
         assert len(result.beta_table) == 0
+        assert result.beta_benchmark is None
+
+    def test_beta_benchmark_stored(self, returns):
+        """Result stores which benchmark was used for beta computation."""
+        result = run_custom_hedge_analysis(
+            returns=returns,
+            long_tickers=["AAPL"],
+            long_weights=np.array([1.0]),
+            long_notional=10_000_000.0,
+            hedge_tickers=["SPY"],
+            hedge_weights=np.array([1.0]),
+            hedge_notional=5_000_000.0,
+            benchmarks=["QQQ"],
+        )
+        assert result.beta_benchmark == "QQQ"
 
 
 class TestCustomHedgeContributions:
