@@ -114,12 +114,12 @@ class TestBetaNeutral:
         np.testing.assert_allclose(w.sum(), -1.0, atol=1e-4)
 
     def test_fallback_no_factors(self, returns):
-        """With no valid factors, should fall back to min-variance."""
-        w = optimize_beta_neutral(
+        """With no valid factors, should fall back to min-variance and return tuple."""
+        w, feasible = optimize_beta_neutral(
             returns, "AAPL", ["MSFT", "SPY"], [], (-1.0, 0.0),
         )
-        # Falls back to min-variance, returns ndarray directly
         assert isinstance(w, np.ndarray)
+        assert feasible is True
 
 
 class TestCVaR:

@@ -159,7 +159,7 @@ def optimize_beta_neutral(
     w0 = np.full(n, -init_ratio / n) if bounds[0] < 0 else np.zeros(n)
 
     if not valid_factors:
-        return optimize_min_variance(returns, target, hedges, bounds, max_hedge_ratio, use_inequality)
+        return optimize_min_variance(returns, target, hedges, bounds, max_hedge_ratio, use_inequality), True
 
     # Compute all betas on a single aligned sample
     all_tickers = [target] + hedges

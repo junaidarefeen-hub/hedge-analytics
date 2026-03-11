@@ -324,12 +324,13 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
         # Weights table — show allocation percentages (normalized to 100% of hedge basket)
         weight_sum = float(np.sum(np.abs(result.weights)))
         display_weights = np.abs(result.weights) / weight_sum if weight_sum > 0 else np.abs(result.weights)
-        side = "Short" if result.weights[0] <= 0 else "Long"
+        sides = ["Short" if w <= 0 else "Long" for w in result.weights]
+        abs_pcts = np.round(display_weights * 100, 2)
         weights_df = pd.DataFrame({
             "Ticker": result.hedge_instruments,
-            "Weight (%)": np.round(display_weights * 100, 2),
+            "Weight (%)": abs_pcts,
             "Notional ($)": [f"{v:,.0f}" for v in np.abs(result.notionals)],
-            "Side": [side] * len(result.hedge_instruments),
+            "Side": sides,
         })
         # Filter out zero-weight instruments for cleaner display
         weights_df = weights_df[weights_df["Weight (%)"] > 0.01].reset_index(drop=True)
