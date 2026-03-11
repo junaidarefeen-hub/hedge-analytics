@@ -464,11 +464,43 @@ def _render_return_decomposition(legs: list[tuple[str, LegDecomposition]], *, ad
     if len(legs) == 1:
         name, leg = legs[0]
         st.plotly_chart(_return_decomp_chart(name, leg, additive), use_container_width=True)
+        st.caption(_return_stats(leg))
     else:
         tabs = st.tabs([name for name, _ in legs])
         for tab, (name, leg) in zip(tabs, legs):
             with tab:
                 st.plotly_chart(_return_decomp_chart(name, leg, additive), use_container_width=True)
+                st.caption(_return_stats(leg))
+
+
+def _return_stats(leg: LegDecomposition) -> str:
+    """Descriptive stats: % of total return from factor vs idiosyncratic."""
+    total_ret = float(leg.cumsum_total.iloc[-1])
+    factor_ret = float(leg.cumsum_factor.iloc[-1])
+    idio_ret = float(leg.cumsum_idio.iloc[-1])
+    if abs(total_ret) > 1e-10:
+        factor_pct = factor_ret / total_ret
+        idio_pct = idio_ret / total_ret
+        return (
+            f"Total return: **{total_ret:.2%}** — "
+            f"Factor: **{factor_ret:.2%}** ({factor_pct:.0%} of total) | "
+            f"Idiosyncratic: **{idio_ret:.2%}** ({idio_pct:.0%} of total)"
+        )
+    return f"Total return: **{total_ret:.2%}** — Factor: **{factor_ret:.2%}** | Idiosyncratic: **{idio_ret:.2%}**"
+
+
+def _vol_stats(leg: LegDecomposition) -> str:
+    """Descriptive stats: % of total variance from factor vs idiosyncratic."""
+    var_total = leg.vol_total ** 2
+    var_factor = leg.vol_factor ** 2
+    var_idio = leg.vol_idio ** 2
+    factor_pct = var_factor / var_total if var_total > 0 else 0
+    idio_pct = var_idio / var_total if var_total > 0 else 0
+    return (
+        f"Total vol: **{leg.vol_total:.1%}** — "
+        f"Factor vol: **{leg.vol_factor:.1%}** ({factor_pct:.0%} of variance) | "
+        f"Idiosyncratic vol: **{leg.vol_idio:.1%}** ({idio_pct:.0%} of variance)"
+    )
 
 
 def _return_decomp_chart(label: str, leg: LegDecomposition, additive: bool) -> go.Figure:
@@ -522,11 +554,13 @@ def _render_vol_decomposition(legs: list[tuple[str, LegDecomposition]], window: 
     if len(legs) == 1:
         name, leg = legs[0]
         st.plotly_chart(_rolling_vol_chart(name, leg, window), use_container_width=True)
+        st.caption(_vol_stats(leg))
     else:
         tabs = st.tabs([name for name, _ in legs])
         for tab, (name, leg) in zip(tabs, legs):
             with tab:
                 st.plotly_chart(_rolling_vol_chart(name, leg, window), use_container_width=True)
+                st.caption(_vol_stats(leg))
 
 
 def _rolling_vol_chart(label: str, leg: LegDecomposition, window: int) -> go.Figure:
