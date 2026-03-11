@@ -181,9 +181,18 @@ def _build_regression_table(ols: OLSResult) -> pd.DataFrame:
 def _build_leg(
     ols: OLSResult, y: pd.Series, dates: pd.DatetimeIndex,
 ) -> LegDecomposition:
-    """Build decomposition for a single portfolio leg."""
-    factor_daily = pd.Series(ols.fitted, index=dates)
-    idio_daily = pd.Series(ols.residuals, index=dates)
+    """Build decomposition for a single portfolio leg.
+
+    Factor = X @ betas (market + GS factors, no intercept).
+    Idio   = alpha + epsilon (intercept + OLS residuals).
+    Additive: factor + idio = total (exact).
+    """
+    # Separate alpha from factor contribution: fitted = alpha + X@betas.
+    # OLS residuals sum to exactly zero (intercept guarantee), so if we used
+    # fitted as "factor" the cumulative idio return would always be ~0%.
+    # Correct split: factor = X@betas (systematic), idio = alpha + epsilon.
+    factor_daily = pd.Series(ols.fitted - ols.alpha, index=dates)
+    idio_daily = pd.Series(ols.residuals + ols.alpha, index=dates)
     total_daily = y
 
     cum_factor = (1 + factor_daily).cumprod()

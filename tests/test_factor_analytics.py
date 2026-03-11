@@ -214,7 +214,7 @@ class TestBetaHeatmapShape:
 
 
 class TestDecompositionAddsUp:
-    """fitted + residual = total daily returns (exactly)."""
+    """factor + idio = total daily returns (exactly)."""
 
     def test_decomposition_adds_up(self, rng, dates):
         T = len(dates)
@@ -240,7 +240,7 @@ class TestDecompositionAddsUp:
             dates=dates,
         )
 
-        # fitted + residual = y exactly
+        # factor + idio = total (exactly)
         np.testing.assert_allclose(
             (result.long.daily_factor + result.long.daily_idio).values,
             long_ret.values,
