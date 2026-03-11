@@ -14,6 +14,7 @@ from config import (
     RETURN_METHODS,
     ROLLING_WINDOW_OPTIONS,
 )
+from data.factor_loader import clear_factor_cache
 from data.fetcher import clear_cache, validate_interval_date_range
 from utils.validation import parse_tickers, validate_date_range
 
@@ -220,6 +221,9 @@ def render_sidebar() -> dict | None:
         if st.button("Clear data cache", key="clear_cache"):
             clear_cache()
             st.success("Cache cleared. Data will be re-fetched on next run.")
+        if st.button("Reload factor data", key="reload_factors"):
+            clear_factor_cache()
+            st.rerun()
 
     return {
         "stock_tickers": stock_tickers,

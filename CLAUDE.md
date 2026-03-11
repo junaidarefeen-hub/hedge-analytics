@@ -20,7 +20,7 @@ Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, sc
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
-- `app.py` — Entry point, 11-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Custom Hedge, Backtest, Monte Carlo, Stress Test, Drawdown, Regime)
+- `app.py` — Entry point, 12-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Custom Hedge, Backtest, Monte Carlo, Stress Test, Drawdown, Regime, Factor Analytics)
 - `config.py` — All defaults and constants (tickers, dates, strategies, bounds, intervals, regime/rolling params)
 - `ui/sidebar.py` — Returns `params` dict consumed by all tabs. Includes interval selector, cache clear button, and peer group load/save/delete.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
@@ -38,7 +38,8 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
   ├─ Monte Carlo tab → run_monte_carlo() → MonteCarloResult
   ├─ Stress Test tab → run_stress_test() → StressTestResult
   ├─ Drawdown tab → compute_drawdowns() → DrawdownAnalysis (standalone or hedged vs unhedged)
-  └─ Regime tab → detect_regimes() → RegimeResult + regime_hedge_effectiveness()
+  ├─ Regime tab → detect_regimes() → RegimeResult + regime_hedge_effectiveness()
+  └─ Factor Analytics tab → load_factor_data() + run_factor_analytics() → FactorAnalyticsResult
 ```
 
 **Session state bridge**: Optimizer stores `HedgeResult` + params hash in `st.session_state`. Backtest, Monte Carlo, Stress, Drawdown (hedged mode), and Regime (hedge effectiveness) read it. Staleness detection via `_params_hash()`.
@@ -103,6 +104,23 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - Extracted from `ui/custom_hedge.py` for reuse across Optimizer, Compare, and Custom Hedge tabs
 - `equal_weight()`, `sync_weights()`, `handle_normalize()`, `render_weight_inputs()`, `weights_array()`
 - Deferred normalize pattern: button sets flag → `st.rerun()` → pre-render applies normalization
+
+### `analytics/factor_analytics.py` — Factor regression engine
+- OLS via `numpy.linalg.lstsq` + `scipy.stats` for inference (no statsmodels dependency)
+- Model: `y = α + β_market × Market + Σ βᵢ × Fᵢ + ε` for each active leg
+- **Short basket optional**: long-only analysis when no short tickers selected; short + combined legs only populated when short basket provided
+- `LegDecomposition` dataclass bundles per-leg OLS result, regression table, cumulative decomposition (both compounded and additive cumsum), vol stats, and daily factor/idio/total series
+- Return decomposition: toggle between compounded `(1+r).cumprod()-1` and additive `r.cumsum()` (exact factor + idio = total)
+- Volatility decomposition: rolling window vol (user-selectable: 20–252 days) for factor, idio, and total
+- Long basket weights allow negative values (-100% to +100%) to represent short positions within the basket
+- Beta heatmap rows match active legs (1 row long-only, 3 rows with short); significance stars from OLS p-values
+- Multicollinearity warning via condition number check on design matrix
+
+### `data/factor_loader.py` — GS factor data from Excel
+- Parses `Factor Prices.xlsx` (16 GS factor price indices, 2018–2026)
+- `load_factor_data()`: cached 24hr, returns `FactorData` (prices, returns, ticker/name maps)
+- `align_factor_returns()`: inner join on normalized DatetimeIndex, dropna for clean regression input
+- `clear_factor_cache()`: called by sidebar "Reload factor data" button
 
 ### `data/fetcher.py` — yfinance with interval support
 - `validate_interval_date_range()`: enforces yfinance limits (1m→7d, 5m/15m→60d, 1h→730d)

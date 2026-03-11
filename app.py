@@ -7,6 +7,7 @@ import pandas as pd
 from analytics.beta import beta_matrix, rolling_beta
 from analytics.correlation import correlation_clustering, correlation_matrix, rolling_correlation
 from analytics.returns import compute_returns
+from data.factor_loader import load_factor_data
 from data.fetcher import fetch_ticker_names, validate_and_fetch
 from ui.drawdown import render_drawdown_tab
 from ui.matrices import beta_heatmap, correlation_dendrogram, correlation_heatmap
@@ -16,6 +17,7 @@ from ui.style import inject_css
 from ui.backtest import render_backtest_tab
 from ui.compare import render_compare_tab
 from ui.custom_hedge import render_custom_hedge_tab
+from ui.factor_analytics import render_factor_analytics_tab
 from ui.montecarlo import render_montecarlo_tab
 from ui.optimizer import render_optimizer_tab
 from ui.stress import render_stress_tab
@@ -71,9 +73,16 @@ sufficiency_warn = check_data_sufficiency(len(returns), params["window"])
 if sufficiency_warn:
     st.warning(sufficiency_warn)
 
+# Load GS factor data from Excel
+try:
+    factor_data = load_factor_data()
+except Exception:
+    st.warning("Could not load Factor Prices.xlsx — Factor Analytics tab will be unavailable.")
+    factor_data = None
+
 # Tabs
-tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_custom, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime = st.tabs(
-    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Custom Hedge", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime"]
+tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_custom, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime, tab_factor = st.tabs(
+    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Custom Hedge", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime", "Factor Analytics"]
 )
 
 # --- Data Tab ---
@@ -103,6 +112,26 @@ with tab_data:
         with st.expander("View closing prices", expanded=False):
             st.dataframe(
                 factor_prices[valid_factors].sort_index(ascending=False).style.format("{:.2f}"),
+                use_container_width=True,
+                height=350,
+            )
+
+    if factor_data is not None:
+        st.subheader("GS Factor Indices")
+        factor_summary = pd.DataFrame([
+            {
+                "Factor": name,
+                "Ticker": factor_data.ticker_map[name],
+                "Start": factor_data.prices[name].first_valid_index().strftime("%Y-%m-%d"),
+                "End": factor_data.prices[name].last_valid_index().strftime("%Y-%m-%d"),
+                "Latest": f"{factor_data.prices[name].dropna().iloc[-1]:.2f}",
+            }
+            for name in factor_data.prices.columns
+        ])
+        st.dataframe(factor_summary, use_container_width=True, hide_index=True)
+        with st.expander("View factor prices", expanded=False):
+            st.dataframe(
+                factor_data.prices.sort_index(ascending=False).style.format("{:.2f}"),
                 use_container_width=True,
                 height=350,
             )
@@ -210,3 +239,7 @@ with tab_dd:
 # --- Regime ---
 with tab_regime:
     render_regime_tab(returns, params)
+
+# --- Factor Analytics ---
+with tab_factor:
+    render_factor_analytics_tab(returns, params, factor_data)
