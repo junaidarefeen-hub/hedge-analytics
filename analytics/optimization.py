@@ -33,6 +33,8 @@ class HedgeResult:
     beta_neutral_feasible: bool | None = None
     cvar: float | None = None
     confidence_level: float | None = None
+    target_tickers: list[str] | None = None
+    target_weights: np.ndarray | None = None
 
 
 def _covariance_pieces(

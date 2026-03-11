@@ -11,6 +11,7 @@ from analytics.stress import ScenarioResult, StressTestResult, run_stress_test
 from config import HISTORICAL_SCENARIOS, STRESS_CUSTOM_SHOCK_RANGE
 from ui.optimizer import _params_hash
 from ui.style import PLOTLY_LAYOUT
+from utils.basket import BASKET_COLUMN_NAME, basket_display_name, inject_basket_column
 
 
 def _pnl_comparison_chart(result: StressTestResult) -> go.Figure:
@@ -106,7 +107,23 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
         "or define custom shock scenarios to estimate the P&L impact on your hedged vs unhedged portfolio."
     )
 
-    st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**")
+    # Reconstruct basket if multi-ticker
+    is_multi = hedge_result.target_tickers and len(hedge_result.target_tickers) > 1
+    if is_multi:
+        augmented_returns, target_col = inject_basket_column(
+            returns, hedge_result.target_tickers, hedge_result.target_weights,
+        )
+        display_target = basket_display_name(hedge_result.target_tickers, hedge_result.target_weights)
+        target_tickers = hedge_result.target_tickers
+        target_weights = hedge_result.target_weights
+    else:
+        augmented_returns = returns
+        target_col = hedge_result.target_ticker
+        display_target = hedge_result.target_ticker
+        target_tickers = [hedge_result.target_ticker]
+        target_weights = np.array([1.0])
+
+    st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{display_target}**")
 
     col_ctrl, col_results = st.columns([1, 2])
 
@@ -150,10 +167,11 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
                     "Expand sidebar date range to include more historical scenarios."
                 )
 
-        # Custom scenarios
+        # Custom scenarios — show shock inputs for each basket constituent + each hedge instrument
         if mode in ("Custom", "Both"):
             st.caption("Custom Scenarios")
-            all_tickers = [hedge_result.target_ticker] + hedge_result.hedge_instruments
+            # Use individual tickers for shock inputs (not the synthetic column)
+            shock_tickers = list(target_tickers) + hedge_result.hedge_instruments
 
             if "stress_custom_count" not in st.session_state:
                 st.session_state["stress_custom_count"] = 1
@@ -168,19 +186,19 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
                     p1, p2, p3 = st.columns(3)
                     with p1:
                         if st.button("Market Crash", key=f"stress_preset_crash_{idx}", use_container_width=True):
-                            for t in all_tickers:
+                            for t in shock_tickers:
                                 st.session_state[f"stress_shock_{idx}_{t}"] = -20.0
                     with p2:
                         if st.button("Mild Selloff", key=f"stress_preset_mild_{idx}", use_container_width=True):
-                            for t in all_tickers:
+                            for t in shock_tickers:
                                 st.session_state[f"stress_shock_{idx}_{t}"] = -10.0
                     with p3:
                         if st.button("Reset", key=f"stress_preset_reset_{idx}", use_container_width=True):
-                            for t in all_tickers:
+                            for t in shock_tickers:
                                 st.session_state[f"stress_shock_{idx}_{t}"] = 0.0
 
-                    shocks = {}
-                    for t in all_tickers:
+                    raw_shocks = {}
+                    for t in shock_tickers:
                         default_val = st.session_state.get(f"stress_shock_{idx}_{t}", 0.0)
                         shock = st.number_input(
                             f"{t} shock (%)",
@@ -191,7 +209,20 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
                             format="%.1f",
                             key=f"stress_shock_{idx}_{t}",
                         )
-                        shocks[t] = shock
+                        raw_shocks[t] = shock
+
+                    # For multi-ticker basket: compute weighted basket shock from constituents
+                    if is_multi:
+                        basket_shock = sum(
+                            raw_shocks.get(tk, 0.0) * target_weights[i]
+                            for i, tk in enumerate(target_tickers)
+                        )
+                        shocks = {BASKET_COLUMN_NAME: basket_shock}
+                        # Add hedge instrument shocks
+                        for h in hedge_result.hedge_instruments:
+                            shocks[h] = raw_shocks.get(h, 0.0)
+                    else:
+                        shocks = raw_shocks
 
                     custom_scenarios_list.append({"name": name, "shocks": shocks})
 
@@ -219,8 +250,8 @@ def render_stress_tab(returns: pd.DataFrame, params: dict):
             with st.spinner("Running stress scenarios..."):
                 try:
                     result = run_stress_test(
-                        returns=returns,
-                        target=hedge_result.target_ticker,
+                        returns=augmented_returns,
+                        target=target_col,
                         hedge_instruments=hedge_result.hedge_instruments,
                         weights=hedge_result.weights,
                         notional=notional,

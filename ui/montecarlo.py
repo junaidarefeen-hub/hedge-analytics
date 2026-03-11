@@ -18,6 +18,7 @@ from config import (
 )
 from ui.optimizer import _params_hash
 from ui.style import PLOTLY_LAYOUT, render_metrics_table
+from utils.basket import basket_display_name, inject_basket_column
 
 
 def _hex_to_rgb(hex_color: str) -> str:
@@ -156,7 +157,18 @@ def render_montecarlo_tab(returns: pd.DataFrame, params: dict):
         "Returns are randomly sampled from the historical distribution to estimate the range of possible gains and losses."
     )
 
-    st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**")
+    # Reconstruct basket if multi-ticker
+    if hedge_result.target_tickers and len(hedge_result.target_tickers) > 1:
+        augmented_returns, target_col = inject_basket_column(
+            returns, hedge_result.target_tickers, hedge_result.target_weights,
+        )
+        display_target = basket_display_name(hedge_result.target_tickers, hedge_result.target_weights)
+    else:
+        augmented_returns = returns
+        target_col = hedge_result.target_ticker
+        display_target = hedge_result.target_ticker
+
+    st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{display_target}**")
 
     col_ctrl, col_results = st.columns([1, 2])
 
@@ -201,8 +213,8 @@ def render_montecarlo_tab(returns: pd.DataFrame, params: dict):
             with st.spinner(f"Running {num_sims:,} simulations over {horizon} days..."):
                 try:
                     result = run_monte_carlo(
-                        returns=returns,
-                        target=hedge_result.target_ticker,
+                        returns=augmented_returns,
+                        target=target_col,
                         hedge_instruments=hedge_result.hedge_instruments,
                         weights=hedge_result.weights,
                         strategy=hedge_result.strategy,

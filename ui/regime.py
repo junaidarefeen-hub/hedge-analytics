@@ -9,6 +9,7 @@ import streamlit as st
 from analytics.regime import RegimeResult, detect_regimes, regime_hedge_effectiveness
 from config import REGIME_LABELS, REGIME_METHODS, REGIME_N_REGIMES, REGIME_VOL_WINDOW
 from ui.style import PLOTLY_LAYOUT
+from utils.basket import basket_display_name, inject_basket_column
 
 _REGIME_COLORS = ["#16a34a", "#2563eb", "#dc2626", "#ca8a04", "#7c3aed"]
 
@@ -167,13 +168,23 @@ def render_regime_tab(returns: pd.DataFrame, params: dict):
     hedge_result = st.session_state.get("hedge_result")
     if hedge_result is not None:
         st.subheader("Hedge Effectiveness by Regime")
+        # Reconstruct basket if multi-ticker
+        if hedge_result.target_tickers and len(hedge_result.target_tickers) > 1:
+            eff_returns, eff_target = inject_basket_column(
+                returns, hedge_result.target_tickers, hedge_result.target_weights,
+            )
+            display_target = basket_display_name(hedge_result.target_tickers, hedge_result.target_weights)
+        else:
+            eff_returns = returns
+            eff_target = hedge_result.target_ticker
+            display_target = hedge_result.target_ticker
         st.caption(
-            f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**"
+            f"Strategy: **{hedge_result.strategy}** | Target: **{display_target}**"
         )
         try:
             eff = regime_hedge_effectiveness(
-                returns=returns,
-                target=hedge_result.target_ticker,
+                returns=eff_returns,
+                target=eff_target,
                 hedges=hedge_result.hedge_instruments,
                 weights=hedge_result.weights,
                 regime_series=regime_result.regime_series,

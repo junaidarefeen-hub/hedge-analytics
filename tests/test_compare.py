@@ -54,3 +54,25 @@ class TestCompareStrategies:
                 val = cmp.ranking_df.loc[metric, col]
                 assert val == int(val)
                 assert val >= 1
+
+
+class TestCompareWithBasket:
+    def test_compare_with_basket_target(self, returns):
+        """compare_strategies works with a synthetic basket column."""
+        import numpy as np
+        from utils.basket import inject_basket_column
+        aug, target = inject_basket_column(returns, ["AAPL", "MSFT"], np.array([0.5, 0.5]))
+        result = compare_strategies(
+            returns=aug,
+            target=target,
+            hedge_instruments=["SPY", "QQQ", "XLE"],
+            notional=1_000_000,
+            bounds=(-1.0, 0.0),
+            factors=["SPY", "QQQ"],
+            confidence=0.95,
+            min_names=0,
+            rolling_window=60,
+            risk_free=0.05,
+        )
+        assert isinstance(result, CompareResult)
+        assert len(result.comparisons) > 0

@@ -81,3 +81,21 @@ class TestRunMonteCarlo:
             run_monte_carlo(
                 tiny, "A", ["B"], np.array([-1.0]), "X", 30, 100, 1_000_000,
             )
+
+
+class TestMonteCarloWithBasket:
+    def test_monte_carlo_with_basket_target(self, returns):
+        """run_monte_carlo works with a synthetic basket column."""
+        from utils.basket import inject_basket_column
+        aug, target = inject_basket_column(returns, ["AAPL", "MSFT"], np.array([0.5, 0.5]))
+        result = run_monte_carlo(
+            aug, target, ["SPY", "QQQ"],
+            weights=np.array([-0.5, -0.5]),
+            strategy="Minimum Variance",
+            horizon=20,
+            num_sims=100,
+            initial_value=1_000_000,
+            seed=42,
+        )
+        assert isinstance(result, MonteCarloResult)
+        assert result.hedged_paths.shape == (100, 21)

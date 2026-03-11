@@ -25,6 +25,8 @@ from config import (
     STRATEGY_OPTIONS,
 )
 from ui.style import PLOTLY_LAYOUT, render_metrics_table
+from ui.weight_helpers import handle_normalize, render_weight_inputs, sync_weights, weights_array
+from utils.basket import basket_display_name, exclude_basket_constituents, inject_basket_column
 
 
 def _params_hash(params: dict) -> str:
@@ -41,12 +43,13 @@ def _params_hash(params: dict) -> str:
 
 def _rolling_corr_chart(result: HedgeResult, window: int) -> go.Figure:
     series = result.rolling_correlation.dropna()
+    display_target = _display_target(result)
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=series.index,
         y=series.values,
         mode="lines",
-        name=f"{result.target_ticker} vs Hedge Basket",
+        name=f"{display_target} vs Hedge Basket",
         line=dict(width=2, color="#2563eb"),
         hovertemplate="%{x|%b %d, %Y}<br>Corr: %{y:.3f}<extra></extra>",
     ))
@@ -56,7 +59,7 @@ def _rolling_corr_chart(result: HedgeResult, window: int) -> go.Figure:
     fig.add_hline(y=0, line_dash="dot", line_color="#cbd5e1", line_width=1)
     fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
-        title=f"{window}-Day Rolling Correlation: {result.target_ticker} vs Hedge Basket",
+        title=f"{window}-Day Rolling Correlation: {display_target} vs Hedge Basket",
         xaxis_title="",
         yaxis_title="Correlation",
         yaxis=dict(range=[-1.05, 1.05]),
@@ -64,6 +67,13 @@ def _rolling_corr_chart(result: HedgeResult, window: int) -> go.Figure:
         showlegend=False,
     )
     return fig
+
+
+def _display_target(result: HedgeResult) -> str:
+    """Human-readable target label from HedgeResult."""
+    if result.target_tickers and len(result.target_tickers) > 1:
+        return basket_display_name(result.target_tickers, result.target_weights)
+    return result.target_ticker
 
 
 def _weight_bar_chart(result: HedgeResult) -> go.Figure:
@@ -113,13 +123,27 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
     with col_ctrl:
         st.subheader("Controls")
 
-        target = st.selectbox(
+        long_tickers = st.multiselect(
             "Target (long position)",
             options=all_tickers,
-            index=0,
-            key="opt_target",
-            help="The ticker you hold long and want to hedge against.",
+            default=[all_tickers[0]] if all_tickers else [],
+            key="opt_target_tickers",
+            help="Select one or more tickers for your long position. Multiple tickers create a weighted basket.",
         )
+
+        if not long_tickers:
+            st.warning("Select at least one long ticker.")
+            return
+
+        # Weight inputs for multi-ticker basket
+        sync_weights("opt_lw", long_tickers)
+        handle_normalize("opt_lw", long_tickers)
+        if len(long_tickers) > 1:
+            long_weights_raw = render_weight_inputs("opt_lw", long_tickers, "opt_norm_long")
+            long_w_arr = weights_array(long_weights_raw, long_tickers)
+        else:
+            long_weights_raw = None
+            long_w_arr = np.array([1.0])
 
         notional = st.number_input(
             f"Notional (default ${DEFAULT_NOTIONAL:,.0f})",
@@ -167,7 +191,8 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
         confidence = DEFAULT_CVAR_CONFIDENCE
 
         if strategy == "Beta-Neutral":
-            available_factors = [f for f in factor_tickers if f in returns.columns and f != target]
+            long_set = set(long_tickers)
+            available_factors = [f for f in factor_tickers if f in returns.columns and f not in long_set]
             if available_factors:
                 selected_factors = st.multiselect(
                     "Neutralize against factors",
@@ -222,11 +247,11 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
         bounds = (lb, ub)
 
         if hedge_universe == "Stocks Only":
-            hedge_instruments = [t for t in stock_tickers if t != target]
+            hedge_instruments = exclude_basket_constituents(stock_tickers, long_tickers)
         elif hedge_universe == "Factors / Indices Only":
-            hedge_instruments = [t for t in factor_tickers if t != target]
+            hedge_instruments = exclude_basket_constituents(factor_tickers, long_tickers)
         else:
-            hedge_instruments = [t for t in all_tickers if t != target]
+            hedge_instruments = exclude_basket_constituents(all_tickers, long_tickers)
 
         if not hedge_instruments:
             st.error("No hedge instruments available for the selected universe.")
@@ -257,8 +282,14 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
 
         if run_opt:
             try:
+                # Inject basket column for multi-ticker long positions
+                if len(long_tickers) > 1:
+                    augmented_returns, target = inject_basket_column(returns, long_tickers, long_w_arr)
+                else:
+                    augmented_returns, target = returns, long_tickers[0]
+
                 result = optimize_hedge(
-                    returns=returns,
+                    returns=augmented_returns,
                     target=target,
                     hedge_instruments=hedge_instruments,
                     strategy=strategy,
@@ -270,6 +301,8 @@ def render_optimizer_tab(returns: pd.DataFrame, params: dict):
                     rolling_window=params["window"],
                     max_gross_notional=max_gross,
                 )
+                result.target_tickers = long_tickers
+                result.target_weights = long_w_arr
                 st.session_state["hedge_result"] = result
                 st.session_state["hedge_params_hash"] = _params_hash(params)
             except Exception as e:
@@ -400,9 +433,17 @@ def _render_rolling_optimization(returns, params, hedge_result):
     if run_ro:
         progress = st.progress(0, text="Running walk-forward optimization...")
         try:
+            # Reconstruct basket if multi-ticker
+            if hedge_result.target_tickers and len(hedge_result.target_tickers) > 1:
+                ro_returns, ro_target = inject_basket_column(
+                    returns, hedge_result.target_tickers, hedge_result.target_weights,
+                )
+            else:
+                ro_returns, ro_target = returns, hedge_result.target_ticker
+
             ro_result = rolling_optimize(
-                returns=returns,
-                target=hedge_result.target_ticker,
+                returns=ro_returns,
+                target=ro_target,
                 hedge_instruments=hedge_result.hedge_instruments,
                 strategy=hedge_result.strategy,
                 bounds=hedge_result.bounds,

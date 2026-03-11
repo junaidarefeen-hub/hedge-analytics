@@ -20,41 +20,7 @@ from config import (
     DEFAULT_ROLLING_VOL_WINDOW,
 )
 from ui.style import PLOTLY_LAYOUT, render_metrics_table
-
-
-def _equal_weight(n: int) -> float:
-    """Return equal weight percentage for *n* constituents."""
-    return round(100.0 / n, 2) if n > 0 else 0.0
-
-
-def _sync_weights(prefix: str, tickers: list[str]) -> None:
-    """Reset weight keys to equal weight when the ticker list changes.
-
-    Runs BEFORE widgets are rendered so session_state is clean.
-    """
-    state_key = f"{prefix}_prev_tickers"
-    prev = st.session_state.get(state_key, None)
-    if prev != tickers:
-        eq = _equal_weight(len(tickers))
-        for tk in tickers:
-            st.session_state[f"{prefix}_{tk}"] = eq
-        # Clean up keys for removed tickers
-        if prev is not None:
-            for old_tk in prev:
-                if old_tk not in tickers:
-                    st.session_state.pop(f"{prefix}_{old_tk}", None)
-        st.session_state[state_key] = list(tickers)
-
-
-def _handle_normalize(prefix: str, tickers: list[str]) -> None:
-    """If a normalize was requested last run, apply it before widgets render."""
-    flag = f"{prefix}_do_normalize"
-    if st.session_state.pop(flag, False):
-        vals = {tk: st.session_state.get(f"{prefix}_{tk}", 0.0) for tk in tickers}
-        total = sum(vals.values())
-        if total > 0:
-            for tk in tickers:
-                st.session_state[f"{prefix}_{tk}"] = round(vals[tk] / total * 100, 2)
+from ui.weight_helpers import equal_weight, handle_normalize, sync_weights
 
 
 def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
@@ -111,16 +77,16 @@ def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
         )
 
     # Pre-render: sync weights to equal-weight on ticker change & apply pending normalizes
-    _sync_weights("cha_lw", long_tickers)
-    _handle_normalize("cha_lw", long_tickers)
-    _sync_weights("cha_hw", hedge_tickers)
-    _handle_normalize("cha_hw", hedge_tickers)
+    sync_weights("cha_lw", long_tickers)
+    handle_normalize("cha_lw", long_tickers)
+    sync_weights("cha_hw", hedge_tickers)
+    handle_normalize("cha_hw", hedge_tickers)
 
     # --- Render weight inputs ---
     with col_long:
         long_weights_raw = {}
         if long_tickers:
-            eq = _equal_weight(len(long_tickers))
+            eq = equal_weight(len(long_tickers))
             for tk in long_tickers:
                 long_weights_raw[tk] = st.number_input(
                     f"{tk} weight (%)",
@@ -139,7 +105,7 @@ def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
     with col_hedge:
         hedge_weights_raw = {}
         if hedge_tickers:
-            eq = _equal_weight(len(hedge_tickers))
+            eq = equal_weight(len(hedge_tickers))
             for tk in hedge_tickers:
                 hedge_weights_raw[tk] = st.number_input(
                     f"{tk} weight (%)",

@@ -20,6 +20,8 @@ from config import (
 )
 from ui.optimizer import HEDGE_UNIVERSE_OPTIONS, _params_hash
 from ui.style import PLOTLY_LAYOUT, render_metrics_table
+from ui.weight_helpers import handle_normalize, render_weight_inputs, sync_weights, weights_array
+from utils.basket import basket_display_name, exclude_basket_constituents, inject_basket_column
 
 
 def _metrics_table(result: CompareResult) -> pd.DataFrame:
@@ -135,8 +137,26 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
     with col_ctrl:
         st.subheader("Controls")
 
-        target = st.selectbox("Target (long position)", options=all_tickers, index=0, key="cmp_target",
-                              help="The ticker you hold long and want to hedge against.")
+        long_tickers = st.multiselect(
+            "Target (long position)", options=all_tickers,
+            default=[all_tickers[0]] if all_tickers else [],
+            key="cmp_target_tickers",
+            help="Select one or more tickers for your long position. Multiple tickers create a weighted basket.",
+        )
+
+        if not long_tickers:
+            st.warning("Select at least one long ticker.")
+            return
+
+        # Weight inputs for multi-ticker basket
+        sync_weights("cmp_lw", long_tickers)
+        handle_normalize("cmp_lw", long_tickers)
+        if len(long_tickers) > 1:
+            long_weights_raw = render_weight_inputs("cmp_lw", long_tickers, "cmp_norm_long")
+            long_w_arr = weights_array(long_weights_raw, long_tickers)
+        else:
+            long_weights_raw = None
+            long_w_arr = np.array([1.0])
 
         notional = st.number_input(
             f"Notional (default ${DEFAULT_NOTIONAL:,.0f})", min_value=1000.0, value=DEFAULT_NOTIONAL, step=1_000_000.0, format="%.0f", key="cmp_notional",
@@ -183,7 +203,8 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
 
         st.divider()
         st.caption("Beta-Neutral settings")
-        available_factors = [f for f in factor_tickers if f in returns.columns and f != target]
+        long_set = set(long_tickers)
+        available_factors = [f for f in factor_tickers if f in returns.columns and f not in long_set]
         selected_factors = st.multiselect(
             "Neutralize against factors", options=available_factors, default=available_factors, key="cmp_factors",
             help="Factors used by the Beta-Neutral strategy to neutralize market exposure.",
@@ -218,11 +239,11 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
 
         # Build hedge instruments
         if hedge_universe == "Stocks Only":
-            hedge_instruments = [t for t in stock_tickers if t != target]
+            hedge_instruments = exclude_basket_constituents(stock_tickers, long_tickers)
         elif hedge_universe == "Factors / Indices Only":
-            hedge_instruments = [t for t in factor_tickers if t != target]
+            hedge_instruments = exclude_basket_constituents(factor_tickers, long_tickers)
         else:
-            hedge_instruments = [t for t in all_tickers if t != target]
+            hedge_instruments = exclude_basket_constituents(all_tickers, long_tickers)
 
         if not hedge_instruments:
             st.error("No hedge instruments available for the selected universe.")
@@ -254,8 +275,14 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
         if run_compare:
             with st.spinner("Running all strategies and backtesting..."):
                 try:
+                    # Inject basket column for multi-ticker long positions
+                    if len(long_tickers) > 1:
+                        augmented_returns, target = inject_basket_column(returns, long_tickers, long_w_arr)
+                    else:
+                        augmented_returns, target = returns, long_tickers[0]
+
                     result = compare_strategies(
-                        returns=returns,
+                        returns=augmented_returns,
                         target=target,
                         hedge_instruments=hedge_instruments,
                         notional=notional,
@@ -269,6 +296,10 @@ def render_compare_tab(returns: pd.DataFrame, params: dict):
                         end_date=pd.Timestamp(bt_end),
                         max_gross_notional=max_gross,
                     )
+                    # Stamp basket metadata on each hedge result
+                    for comp in result.comparisons:
+                        comp.hedge_result.target_tickers = long_tickers
+                        comp.hedge_result.target_weights = long_w_arr
                     st.session_state["compare_result"] = result
                     st.session_state["compare_params_hash"] = _params_hash(params)
                 except Exception as e:

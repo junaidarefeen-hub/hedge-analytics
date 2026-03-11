@@ -232,3 +232,28 @@ class TestDynamicBacktest:
             rebalance_freq="monthly", lookback_window=60,
         )
         assert len(r_w.rebalance_dates) >= len(r_m.rebalance_dates)
+
+
+class TestBacktestWithBasket:
+    def test_backtest_with_basket_target(self, returns):
+        """run_backtest works with a synthetic basket column as target."""
+        from utils.basket import inject_basket_column
+        weights_long = np.array([0.5, 0.5])
+        aug_returns, target = inject_basket_column(returns, ["AAPL", "MSFT"], weights_long)
+        hedges = ["SPY", "QQQ", "XLE"]
+        hedge_weights = np.array([-0.4, -0.3, -0.3])
+        bt = run_backtest(aug_returns, target, hedges, hedge_weights)
+        assert isinstance(bt, BacktestResult)
+        assert bt.metrics.loc["Ann. Volatility", "Hedged"] > 0
+        assert len(bt.daily_hedged) > 0
+
+    def test_basket_backtest_different_from_single(self, returns):
+        """Basket target should produce different results than single ticker."""
+        from utils.basket import inject_basket_column
+        # Single ticker
+        bt_single = run_backtest(returns, "AAPL", ["SPY", "QQQ"], np.array([-0.5, -0.5]))
+        # Basket
+        aug, target = inject_basket_column(returns, ["AAPL", "MSFT"], np.array([0.5, 0.5]))
+        bt_basket = run_backtest(aug, target, ["SPY", "QQQ"], np.array([-0.5, -0.5]))
+        # Metrics should differ (different target)
+        assert bt_single.metrics.loc["Ann. Volatility", "Unhedged"] != bt_basket.metrics.loc["Ann. Volatility", "Unhedged"]

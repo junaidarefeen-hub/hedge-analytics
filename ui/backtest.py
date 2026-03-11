@@ -16,6 +16,7 @@ from config import (
 )
 from ui.optimizer import _params_hash
 from ui.style import PLOTLY_LAYOUT, render_metrics_table
+from utils.basket import basket_display_name, inject_basket_column
 
 
 def _cumulative_chart(result: BacktestResult) -> go.Figure:
@@ -93,7 +94,18 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
         "The dynamic rebalancing backtest periodically re-optimizes weights, simulating a real-world rebalancing schedule."
     )
 
-    st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}**")
+    # Reconstruct basket if multi-ticker
+    if hedge_result.target_tickers and len(hedge_result.target_tickers) > 1:
+        augmented_returns, target_col = inject_basket_column(
+            returns, hedge_result.target_tickers, hedge_result.target_weights,
+        )
+        display_target = basket_display_name(hedge_result.target_tickers, hedge_result.target_weights)
+    else:
+        augmented_returns = returns
+        target_col = hedge_result.target_ticker
+        display_target = hedge_result.target_ticker
+
+    st.caption(f"Strategy: **{hedge_result.strategy}** | Target: **{display_target}**")
 
     # Controls
     c1, c2, c3, c4 = st.columns(4)
@@ -118,8 +130,8 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
     if run_bt:
         try:
             bt_result = run_backtest(
-                returns=returns,
-                target=hedge_result.target_ticker,
+                returns=augmented_returns,
+                target=target_col,
                 hedge_instruments=hedge_result.hedge_instruments,
                 weights=hedge_result.weights,
                 start_date=pd.Timestamp(bt_start),
@@ -171,7 +183,7 @@ def render_backtest_tab(returns: pd.DataFrame, params: dict):
     )
 
     if mode == "Dynamic Rebalancing Backtest":
-        _render_dynamic_backtest(returns, params, hedge_result, bt_result)
+        _render_dynamic_backtest(augmented_returns, params, hedge_result, bt_result)
 
 
 def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
@@ -201,9 +213,16 @@ def _render_dynamic_backtest(returns, params, hedge_result, static_bt_result):
     if run_dyn:
         progress = st.progress(0, text="Running dynamic rebalancing...")
         try:
+            # Resolve target column (basket column already in returns if multi-ticker)
+            if hedge_result.target_tickers and len(hedge_result.target_tickers) > 1:
+                from utils.basket import BASKET_COLUMN_NAME
+                dyn_target = BASKET_COLUMN_NAME
+            else:
+                dyn_target = hedge_result.target_ticker
+
             dyn_result = run_dynamic_backtest(
                 returns=returns,
-                target=hedge_result.target_ticker,
+                target=dyn_target,
                 hedges=hedge_result.hedge_instruments,
                 static_weights=hedge_result.weights,
                 strategy=hedge_result.strategy,

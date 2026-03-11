@@ -152,3 +152,34 @@ class TestRunStressTest:
         )
         assert "Old Crisis" in result.skipped
         assert len(result.scenarios) == 1  # only the custom survived
+
+
+class TestStressWithBasket:
+    def test_custom_scenario_with_basket_target(self, returns):
+        """Custom scenario with basket column correctly computes P&L."""
+        from utils.basket import BASKET_COLUMN_NAME, inject_basket_column
+        weights_long = np.array([0.6, 0.4])
+        aug, target = inject_basket_column(returns, ["AAPL", "MSFT"], weights_long)
+        # Basket shock = 0.6 * (-10) + 0.4 * (-20) = -14
+        basket_shock = 0.6 * (-10) + 0.4 * (-20)
+        result = _run_custom_scenario(
+            target=target,
+            hedge_instruments=["SPY"],
+            weights=np.array([-1.0]),
+            notional=1_000_000,
+            shocks={BASKET_COLUMN_NAME: basket_shock, "SPY": -15},
+            name="Basket Crash",
+        )
+        assert result.unhedged_pnl == pytest.approx(-140_000)
+
+    def test_stress_test_with_basket_target(self, returns):
+        """Full stress test works with a synthetic basket column."""
+        from utils.basket import BASKET_COLUMN_NAME, inject_basket_column
+        aug, target = inject_basket_column(returns, ["AAPL", "MSFT"], np.array([0.5, 0.5]))
+        result = run_stress_test(
+            aug, target, ["SPY", "QQQ"], np.array([-0.5, -0.5]),
+            1_000_000, "Min Var",
+            custom_scenarios=[{"name": "Test", "shocks": {BASKET_COLUMN_NAME: -10, "SPY": -8, "QQQ": -12}}],
+        )
+        assert isinstance(result, StressTestResult)
+        assert len(result.scenarios) == 1

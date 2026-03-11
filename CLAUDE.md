@@ -43,6 +43,8 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 
 **Session state bridge**: Optimizer stores `HedgeResult` + params hash in `st.session_state`. Backtest, Monte Carlo, Stress, Drawdown (hedged mode), and Regime (hedge effectiveness) read it. Staleness detection via `_params_hash()`.
 
+**Multi-ticker long basket**: Optimizer and Compare tabs support selecting multiple long tickers via `st.multiselect` with per-ticker weight inputs. A synthetic basket column (`__LONG_BASKET__`) is injected into the returns DataFrame before any analytics call. All downstream tabs reconstruct the basket from `HedgeResult.target_tickers/target_weights`. Single-ticker case is exact passthrough (zero regression).
+
 ## Key Modules
 
 ### `analytics/optimization.py` — 4 strategies with max gross notional constraint
@@ -58,6 +60,7 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
   - `HedgeResult` stores `hedge_ratio` (actual) and `max_gross_notional` (cap) for downstream use
 - **Weight display**: UI normalizes by `|sum(weights)|` so allocation percentages always sum to 100%; notional $ columns show actual deployed amounts
 - All downstream analytics (backtest, MC, stress, drawdown, regime) are weight-sum agnostic — they use `target + hedges @ weights` directly
+- **Basket metadata**: `HedgeResult.target_tickers` and `target_weights` store basket constituents; downstream tabs call `inject_basket_column()` to reconstruct the synthetic column
 
 ### `analytics/backtest.py` — Static + dynamic backtesting
 - 11 metrics: Total/Ann. Return, Ann. Vol, Sharpe, Sortino, Max DD, Calmar, Omega, Max DD Duration, Tracking Error, Information Ratio
@@ -89,6 +92,18 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 ### `analytics/correlation.py` — Includes hierarchical clustering
 - `correlation_clustering()`: distance = `1 - |corr|`, scipy linkage, rendered as plotly dendrogram in `ui/matrices.py`
 
+### `utils/basket.py` — Multi-ticker basket support
+- `BASKET_COLUMN_NAME = "__LONG_BASKET__"` — synthetic column name, cannot collide with real tickers
+- `inject_basket_column(returns, tickers, weights)` → `(augmented_df, col_name)` — single ticker: passthrough; multi: weighted sum
+- `exclude_basket_constituents(candidates, basket_tickers)` — remove basket members from hedge universe
+- `basket_display_name(tickers, weights)` — human-readable label like "AAPL (50%) + MSFT (50%)"
+- Used by Optimizer, Compare, and all downstream tabs that read `HedgeResult`
+
+### `ui/weight_helpers.py` — Shared weight management UI helpers
+- Extracted from `ui/custom_hedge.py` for reuse across Optimizer, Compare, and Custom Hedge tabs
+- `equal_weight()`, `sync_weights()`, `handle_normalize()`, `render_weight_inputs()`, `weights_array()`
+- Deferred normalize pattern: button sets flag → `st.rerun()` → pre-render applies normalization
+
 ### `data/fetcher.py` — yfinance with interval support
 - `validate_interval_date_range()`: enforces yfinance limits (1m→7d, 5m/15m→60d, 1h→730d)
 - `clear_cache()`: clears both price and name caches
@@ -106,3 +121,4 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - Correlation/beta matrices use full-period calculations; rolling window only affects rolling line charts
 - Peer group loading uses a two-phase rerun: phase 1 stages pending tickers + selectbox reset, phase 2 (before widget render) applies them. This avoids Streamlit's "cannot modify session_state after widget instantiation" error and prevents infinite rerun loops.
 - Drawdown (hedged mode) and Regime tabs display strategy, target, and analysis period for context
+- Multi-ticker long basket: Optimizer uses `opt_target_tickers` (multiselect) instead of `opt_target` (selectbox) to avoid Streamlit session key type mismatch. Compare uses `cmp_target_tickers`. Stress test custom shocks show per-constituent inputs, with basket shock computed as weighted sum before passing to analytics.

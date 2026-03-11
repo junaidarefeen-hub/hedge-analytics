@@ -264,3 +264,53 @@ class TestOptimizeHedge:
         )
         assert result.cvar is not None
         assert result.confidence_level == 0.95
+
+
+# ---------------------------------------------------------------------------
+# Basket metadata on HedgeResult
+# ---------------------------------------------------------------------------
+
+class TestHedgeResultBasketMetadata:
+    def test_defaults_none(self, returns):
+        result = optimize_hedge(
+            returns, "AAPL", ["MSFT", "SPY", "QQQ"], "Minimum Variance",
+            1_000_000, (-1.0, 0.0),
+        )
+        assert result.target_tickers is None
+        assert result.target_weights is None
+
+    def test_stamp_single_ticker(self, returns):
+        result = optimize_hedge(
+            returns, "AAPL", ["MSFT", "SPY", "QQQ"], "Minimum Variance",
+            1_000_000, (-1.0, 0.0),
+        )
+        result.target_tickers = ["AAPL"]
+        result.target_weights = np.array([1.0])
+        assert result.target_tickers == ["AAPL"]
+
+    def test_stamp_multi_ticker(self, returns):
+        from utils.basket import inject_basket_column
+        weights = np.array([0.6, 0.4])
+        aug_returns, target = inject_basket_column(returns, ["AAPL", "MSFT"], weights)
+        result = optimize_hedge(
+            aug_returns, target, ["SPY", "QQQ", "XLE"], "Minimum Variance",
+            1_000_000, (-1.0, 0.0),
+        )
+        result.target_tickers = ["AAPL", "MSFT"]
+        result.target_weights = weights
+        assert result.target_tickers == ["AAPL", "MSFT"]
+        assert isinstance(result, HedgeResult)
+        assert result.hedged_volatility > 0
+
+    def test_optimize_with_basket_column(self, returns):
+        """Full optimization works with synthetic basket column as target."""
+        from utils.basket import inject_basket_column
+        weights = np.array([0.5, 0.5])
+        aug_returns, target = inject_basket_column(returns, ["AAPL", "MSFT"], weights)
+        result = optimize_hedge(
+            aug_returns, target, ["SPY", "QQQ", "XLE"], "Minimum Variance",
+            1_000_000, (-1.0, 0.0),
+        )
+        assert result.hedged_volatility > 0
+        assert result.unhedged_volatility > 0
+        np.testing.assert_allclose(result.weights.sum(), -1.0, atol=1e-6)

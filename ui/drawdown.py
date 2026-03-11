@@ -9,6 +9,7 @@ import streamlit as st
 from analytics.drawdown import compute_drawdowns
 from analytics.returns import compute_returns
 from ui.style import PLOTLY_LAYOUT
+from utils.basket import basket_display_name
 
 
 def _underwater_chart(underwater: pd.Series, title: str = "Underwater Chart") -> go.Figure:
@@ -107,10 +108,14 @@ def render_drawdown_tab(returns: pd.DataFrame, params: dict):
 
         hedge_result = st.session_state.get("hedge_result")
         if hedge_result is not None:
+            if hedge_result.target_tickers and len(hedge_result.target_tickers) > 1:
+                display_target = basket_display_name(hedge_result.target_tickers, hedge_result.target_weights)
+            else:
+                display_target = hedge_result.target_ticker
             start_dt = bt_result.cumulative_unhedged.index.min().strftime("%Y-%m-%d")
             end_dt = bt_result.cumulative_unhedged.index.max().strftime("%Y-%m-%d")
             st.caption(
-                f"Strategy: **{hedge_result.strategy}** | Target: **{hedge_result.target_ticker}** | "
+                f"Strategy: **{hedge_result.strategy}** | Target: **{display_target}** | "
                 f"Period: **{start_dt}** to **{end_dt}**"
             )
 
