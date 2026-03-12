@@ -76,8 +76,8 @@ if sufficiency_warn:
 # Load GS factor data from Excel
 try:
     factor_data = load_factor_data()
-except Exception:
-    st.warning("Could not load Factor Prices.xlsx — Factor Analytics tab will be unavailable.")
+except Exception as e:
+    st.warning(f"Could not load Factor Prices.xlsx — Factor Analytics tab will be unavailable. ({e})")
     factor_data = None
 
 # Tabs
