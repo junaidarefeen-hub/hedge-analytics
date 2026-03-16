@@ -20,7 +20,7 @@ Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, sc
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
-- `app.py` — Entry point, 12-tab layout (Data, Correlation, Beta, Hedge Optimizer, Strategy Compare, Custom Hedge, Backtest, Monte Carlo, Stress Test, Drawdown, Regime, Factor Analytics)
+- `app.py` — Entry point, 12-tab layout. Passes `returns`, `params`, and `factor_data` to all tabs that need them.
 - `config.py` — All defaults and constants (tickers, dates, strategies, bounds, intervals, regime/rolling params)
 - `ui/sidebar.py` — Returns `params` dict consumed by all tabs. Includes interval selector, cache clear button, and peer group load/save/delete.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
@@ -33,7 +33,7 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
   ├─ Beta tab → heatmap + rolling chart
   ├─ Optimizer tab → optimize_hedge() → HedgeResult → session_state; toggle for rolling optimization
   ├─ Compare tab → compare_strategies() → 4 strategies + backtests → CompareResult
-  ├─ Custom Hedge tab → run_custom_hedge_analysis() → CustomHedgeResult (standalone, no session_state bridge)
+  ├─ Custom Hedge tab → run_custom_hedge_analysis() → CustomHedgeResult; also embeds MC + Factor Analytics sections
   ├─ Backtest tab → run_backtest() → BacktestResult; toggle for dynamic rebalancing
   ├─ Monte Carlo tab → run_monte_carlo() → MonteCarloResult
   ├─ Stress Test tab → run_stress_test() → StressTestResult
@@ -77,9 +77,12 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - `run_custom_hedge_analysis()`: daily standalone/hedged returns, rolling vol/correlation, per-instrument net beta decomposition, hedge efficiency, constituent P&L contributions
 - Reuses `_compute_metrics()`, `_tracking_error()`, `_information_ratio()` from `analytics/backtest.py`
 - Independent of optimizer session state — fully self-contained tab
-- **Net beta**: single-benchmark univariate `cov/var`, decomposed per hedge instrument with effective hedge ratios (`hedge_ratio × weight`). Benchmark selection limited to hedge constituents (selectbox, not multiselect) to avoid confusing multivariate partitioning effects
-- **Live net beta**: `compute_net_beta()` runs on every Streamlit rerun (no Analyze click needed) — metric cards for long beta, per-instrument contribution, and net beta update live as user changes notionals, tickers, or weights. Enables quick beta-neutral portfolio construction
+- **Net beta**: single-benchmark univariate `cov/var`, decomposed per hedge instrument with effective hedge ratios (`hedge_ratio × weight`). Benchmark sourced from `params["benchmarks"]` (sidebar indices), defaults to SPY. Falls back to hedge tickers if no benchmarks available.
+- **Live net beta**: `compute_net_beta()` runs on every Streamlit rerun (no Analyze click needed) — metric cards for long beta, per-instrument contribution, and net beta update live as user changes notionals, tickers, or weights
 - **Rolling net beta**: computed inside `run_custom_hedge_analysis()` using rolling `cov/var`; chart shows beta-neutral zero line and full-period reference line
+- **P&L attribution**: uses two Plotly stackgroups (`"long"` / `"short"` based on `(L)` / `(S)` suffix) so negative short contributions display below zero
+- **Embedded Monte Carlo**: creates synthetic long basket via `inject_basket_column`, constructs MC weights as `-hedge_ratio * hedge_weights` (negative = short), calls `run_monte_carlo()`. Reuses chart functions from `ui/montecarlo.py`. Session keys prefixed `cha_mc_`.
+- **Embedded Factor Analytics**: passes `daily_standalone` / `daily_hedge_basket` / `daily_hedged` through `align_factor_returns()` into `run_factor_analytics()` for 3-leg OLS (Long/Short/Combined). Reuses chart functions from `ui/factor_analytics.py`. Requires `factor_data` param. Session keys prefixed `cha_fa_`. Gracefully hidden when factor data unavailable.
 - **Weights**: auto-reset to equal weight when tickers change; normalize button uses deferred flag + `st.rerun()` to avoid Streamlit's "cannot modify session_state after widget instantiation" error
 
 ### `analytics/drawdown.py` — Drawdown period detection

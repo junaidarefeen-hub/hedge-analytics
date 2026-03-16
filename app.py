@@ -218,7 +218,7 @@ with tab_compare:
 
 # --- Custom Hedge ---
 with tab_custom:
-    render_custom_hedge_tab(returns, params)
+    render_custom_hedge_tab(returns, params, factor_data)
 
 # --- Backtest ---
 with tab_backtest:

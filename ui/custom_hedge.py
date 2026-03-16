@@ -13,17 +13,38 @@ from analytics.custom_hedge import (
     run_custom_hedge_analysis,
 )
 from analytics.drawdown import compute_drawdowns
+from analytics.factor_analytics import FactorAnalyticsResult, run_factor_analytics
+from analytics.montecarlo import MonteCarloResult, run_monte_carlo
 from config import (
     CHA_DEFAULT_HEDGE_NOTIONAL,
     CHA_DEFAULT_LONG_NOTIONAL,
     DEFAULT_RISK_FREE_RATE,
     DEFAULT_ROLLING_VOL_WINDOW,
+    FA_DEFAULT_P_THRESHOLD,
+    MC_DEFAULT_HORIZON,
+    MC_DEFAULT_NUM_SIMS,
+    MC_DEFAULT_SEED,
+    MC_HORIZON_OPTIONS,
+    MC_NUM_SIMS_OPTIONS,
+    MC_SPAGHETTI_PATHS,
 )
+from data.factor_loader import FactorData, align_factor_returns
+from ui.factor_analytics import (
+    _active_legs,
+    _beta_heatmap_chart,
+    _render_regression_table,
+    _render_return_decomposition,
+    _render_vol_decomposition,
+)
+from ui.montecarlo import _distribution_chart, _fan_chart, _spaghetti_chart
 from ui.style import PLOTLY_LAYOUT, render_metrics_table
 from ui.weight_helpers import equal_weight, handle_normalize, sync_weights
+from utils.basket import inject_basket_column
 
 
-def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
+def render_custom_hedge_tab(
+    returns: pd.DataFrame, params: dict, factor_data: FactorData | None = None,
+):
     """Render the Custom Hedge Analyzer tab."""
     all_tickers = [c for c in returns.columns]
 
@@ -168,14 +189,17 @@ def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
         )
     with s5:
         selected_benchmark = None
-        if hedge_tickers:
+        benchmark_options = [b for b in params.get("benchmarks", []) if b in returns.columns]
+        if not benchmark_options and hedge_tickers:
+            benchmark_options = list(hedge_tickers)
+        if benchmark_options:
+            default_idx = benchmark_options.index("SPY") if "SPY" in benchmark_options else 0
             selected_benchmark = st.selectbox(
                 "Benchmark (for net beta)",
-                options=hedge_tickers,
-                index=0,
+                options=benchmark_options,
+                index=default_idx,
                 key="cha_benchmark",
-                help="Select a hedge constituent to see your net portfolio beta against it. "
-                     "Shows how much exposure to this instrument remains after hedging.",
+                help="Index to compute net portfolio beta against. Uses sidebar factor/index tickers.",
             )
 
     # ── Early exit if portfolios incomplete ───────────────────────────────
@@ -254,6 +278,13 @@ def render_custom_hedge_tab(returns: pd.DataFrame, params: dict):
 
     # ── Results ───────────────────────────────────────────────────────────
     _render_results(result, rolling_window, selected_benchmark)
+
+    # ── Monte Carlo Section ──────────────────────────────────────────────
+    _render_montecarlo_section(returns, result)
+
+    # ── Factor Exposure Section ──────────────────────────────────────────
+    if factor_data is not None:
+        _render_factor_section(returns, result, factor_data, params)
 
 
 def _render_results(
@@ -522,14 +553,16 @@ def _attribution_chart(result: CustomHedgeResult) -> go.Figure:
     cum_contrib = contrib.cumsum()
     fig = go.Figure()
     for col in cum_contrib.columns:
+        is_short = col.endswith("(S)")
         fig.add_trace(go.Scatter(
             x=cum_contrib.index,
             y=cum_contrib[col].values,
             mode="lines",
             name=col,
-            stackgroup="one",
+            stackgroup="short" if is_short else "long",
             hovertemplate=f"{col}<br>" + "%{x|%b %d, %Y}<br>Contrib: %{y:.4f}<extra></extra>",
         ))
+    fig.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1)
     fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
         title="Cumulative P&L Attribution by Constituent",
@@ -538,3 +571,285 @@ def _attribution_chart(result: CustomHedgeResult) -> go.Figure:
         height=400,
     )
     return fig
+
+
+# ── Monte Carlo Section ──────────────────────────────────────────────────
+
+
+def _render_montecarlo_section(
+    returns: pd.DataFrame,
+    result: CustomHedgeResult,
+):
+    """Monte Carlo simulation for the custom hedge position."""
+    st.divider()
+    st.subheader("Monte Carlo Simulation")
+    st.caption(
+        "Simulate forward paths for the standalone (unhedged) and hedged portfolios "
+        "using Monte Carlo methods based on historical return distributions."
+    )
+
+    # Build synthetic long basket column
+    augmented_returns, target_col = inject_basket_column(
+        returns, result.long_tickers, result.long_weights,
+    )
+
+    # MC hedge weights: negative because short positions
+    mc_hedge_weights = -result.hedge_ratio * result.hedge_weights
+
+    # Controls
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        horizon = st.selectbox(
+            "Horizon (days)",
+            options=MC_HORIZON_OPTIONS,
+            index=MC_HORIZON_OPTIONS.index(MC_DEFAULT_HORIZON),
+            key="cha_mc_horizon",
+            help="Number of trading days to simulate forward.",
+        )
+    with c2:
+        num_sims = st.selectbox(
+            "Simulations",
+            options=MC_NUM_SIMS_OPTIONS,
+            index=MC_NUM_SIMS_OPTIONS.index(MC_DEFAULT_NUM_SIMS),
+            key="cha_mc_num_sims",
+        )
+    with c3:
+        initial_value = st.number_input(
+            "Initial value ($)",
+            min_value=1000.0,
+            value=result.long_notional,
+            step=10_000.0,
+            format="%.0f",
+            key="cha_mc_initial",
+        )
+    with c4:
+        use_seed = st.checkbox("Reproducible", value=True, key="cha_mc_seed")
+
+    run_mc = st.button(
+        "Run Monte Carlo", type="secondary", use_container_width=True, key="cha_mc_run",
+    )
+
+    if run_mc:
+        with st.spinner(f"Running {num_sims:,} simulations over {horizon} days..."):
+            try:
+                mc_result = run_monte_carlo(
+                    returns=augmented_returns,
+                    target=target_col,
+                    hedge_instruments=result.hedge_tickers,
+                    weights=mc_hedge_weights,
+                    strategy="Custom Hedge",
+                    horizon=horizon,
+                    num_sims=num_sims,
+                    initial_value=initial_value,
+                    confidence_levels=[0.95, 0.99],
+                    seed=MC_DEFAULT_SEED if use_seed else None,
+                )
+                st.session_state["cha_mc_result"] = mc_result
+            except Exception as e:
+                st.error(f"Monte Carlo failed: {e}")
+                return
+
+    mc_result: MonteCarloResult | None = st.session_state.get("cha_mc_result")
+    if mc_result is None:
+        st.info("Click **Run Monte Carlo** to simulate forward paths.")
+        return
+
+    # Metrics table
+    pct_rows = {"Mean Return", "Median Return", "Best Case", "Worst Case"}
+    var_rows = {r for r in mc_result.metrics.index if r.startswith("VaR") or r.startswith("CVaR")}
+    prob_rows = {r for r in mc_result.metrics.index if r.startswith("P(loss")}
+    fmt_metrics = mc_result.metrics.copy()
+    for col in fmt_metrics.columns:
+        fmt_metrics[col] = mc_result.metrics.index.map(
+            lambda idx, c=col: (
+                f"{mc_result.metrics.loc[idx, c]:.2%}"
+                if idx in pct_rows | var_rows | prob_rows
+                else f"{mc_result.metrics.loc[idx, c]:.4f}"
+            )
+        )
+    render_metrics_table(fmt_metrics)
+
+    # Charts
+    st.plotly_chart(_distribution_chart(mc_result), use_container_width=True)
+
+    ch1, ch2 = st.columns(2)
+    with ch1:
+        st.plotly_chart(_fan_chart(mc_result, "hedged"), use_container_width=True)
+    with ch2:
+        st.plotly_chart(_fan_chart(mc_result, "unhedged"), use_container_width=True)
+
+    with st.expander("Individual Simulated Paths", expanded=False):
+        st.plotly_chart(
+            _spaghetti_chart(mc_result, MC_SPAGHETTI_PATHS), use_container_width=True,
+        )
+
+
+# ── Factor Exposure Section ──────────────────────────────────────────────
+
+
+def _render_factor_section(
+    returns: pd.DataFrame,
+    result: CustomHedgeResult,
+    factor_data: FactorData,
+    params: dict,
+):
+    """Factor exposure analysis for the custom hedge combined position."""
+    st.divider()
+    st.subheader("Factor Exposure Analysis")
+    st.caption(
+        "OLS regression of the combined (hedged) position against a market index "
+        "and GS factor price series. Shows how much of the portfolio's return and risk "
+        "is explained by systematic factor exposures."
+    )
+
+    factor_display_names = list(factor_data.prices.columns)
+    benchmarks = [b for b in params.get("benchmarks", []) if b in returns.columns]
+
+    # Controls
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        market_options = benchmarks if benchmarks else list(returns.columns)[:1]
+        fa_market = st.selectbox(
+            "Market index",
+            options=market_options,
+            index=market_options.index("SPY") if "SPY" in market_options else 0,
+            key="cha_fa_market",
+            help="Market benchmark for the factor regression.",
+        )
+    with f2:
+        default_factors = [
+            f for f in [
+                "Momentum", "Value", "Quality", "Leverage",
+                "Profitability", "10Yr Sensitivity", "Size", "Growth", "Crowding",
+            ] if f in factor_display_names
+        ]
+        selected_factors = st.multiselect(
+            "GS Factors",
+            options=factor_display_names,
+            default=default_factors,
+            key="cha_fa_factors",
+            help="Select GS factor indices to include as regressors.",
+        )
+    with f3:
+        p_threshold = st.number_input(
+            "P-value threshold",
+            min_value=0.001,
+            max_value=0.50,
+            value=FA_DEFAULT_P_THRESHOLD,
+            step=0.01,
+            format="%.3f",
+            key="cha_fa_p_threshold",
+        )
+
+    if not selected_factors:
+        st.info("Select at least one GS factor.")
+        return
+
+    run_fa = st.button(
+        "Run Factor Analysis", type="secondary", use_container_width=True, key="cha_fa_run",
+    )
+
+    if run_fa:
+        try:
+            fa_result = _run_cha_factor_analysis(
+                returns, result, factor_data, fa_market, selected_factors, p_threshold,
+            )
+            st.session_state["cha_fa_result"] = fa_result
+        except Exception as e:
+            st.error(f"Factor analysis failed: {e}")
+            return
+
+    fa_result: FactorAnalyticsResult | None = st.session_state.get("cha_fa_result")
+    if fa_result is None:
+        st.info("Click **Run Factor Analysis** to see factor exposures.")
+        return
+
+    _render_fa_results(fa_result)
+
+
+def _run_cha_factor_analysis(
+    returns: pd.DataFrame,
+    result: CustomHedgeResult,
+    factor_data: FactorData,
+    market_index: str,
+    selected_factors: list[str],
+    p_threshold: float,
+) -> FactorAnalyticsResult:
+    """Prepare data and run factor analytics for the custom hedge position."""
+    long_ret = result.daily_standalone
+    short_ret = result.daily_hedge_basket
+    combined_ret = result.daily_hedged
+
+    market_ret = returns[market_index].loc[long_ret.index]
+    fr = factor_data.returns[selected_factors]
+
+    # Align each leg with factors and market
+    fr_aligned, long_aligned, market_aligned = align_factor_returns(fr, long_ret, market_ret)
+    fr_s, short_aligned, _ = align_factor_returns(fr, short_ret, market_ret)
+    fr_c, combined_aligned, _ = align_factor_returns(fr, combined_ret, market_ret)
+
+    # Intersect all date sets
+    common = fr_aligned.index.intersection(fr_s.index).intersection(fr_c.index)
+    fr_aligned = fr_aligned.loc[common]
+    long_aligned = long_aligned.loc[common]
+    market_aligned = market_aligned.loc[common]
+    short_aligned = short_aligned.loc[common]
+    combined_aligned = combined_aligned.loc[common]
+
+    if len(common) < 30:
+        raise ValueError(f"Only {len(common)} overlapping observations — need at least 30.")
+
+    return run_factor_analytics(
+        long_returns=long_aligned,
+        market_returns=market_aligned,
+        factor_returns=fr_aligned,
+        market_index=market_index,
+        factor_names=selected_factors,
+        dates=common,
+        short_returns=short_aligned,
+        combined_returns=combined_aligned,
+        p_threshold=p_threshold,
+    )
+
+
+def _render_fa_results(result: FactorAnalyticsResult):
+    """Render factor analytics results, reusing chart functions from ui/factor_analytics."""
+    legs = _active_legs(result)
+
+    # Summary R² cards
+    cols = st.columns(2 * len(legs))
+    for i, (name, leg) in enumerate(legs):
+        cols[2 * i].metric(f"{name} R\u00b2", f"{leg.ols.r_squared:.3f}")
+        cols[2 * i + 1].metric(f"{name} Adj R\u00b2", f"{leg.ols.r_squared_adj:.3f}")
+
+    # Regression tables
+    if len(legs) == 1:
+        name, leg = legs[0]
+        _render_regression_table(leg.table, leg.ols, name)
+    else:
+        tab_widgets = st.tabs([name for name, _ in legs])
+        for tab, (name, leg) in zip(tab_widgets, legs):
+            with tab:
+                _render_regression_table(leg.table, leg.ols, name)
+
+    # Beta heatmap
+    st.plotly_chart(_beta_heatmap_chart(result), use_container_width=True)
+
+    # Return decomposition
+    ret_mode = st.radio(
+        "View",
+        options=["Compounded (growth of $1)", "Additive (cumulative sum)"],
+        horizontal=True,
+        key="cha_fa_return_mode",
+        help="Compounded shows (1+r).cumprod(); additive shows r.cumsum() where factor + idio = total exactly.",
+    )
+    _render_return_decomposition(legs, additive=ret_mode.startswith("Additive"))
+
+    # Vol decomposition
+    vol_window = st.select_slider(
+        "Rolling window (days)",
+        options=[20, 30, 60, 90, 120, 252],
+        value=60,
+        key="cha_fa_vol_window",
+    )
+    _render_vol_decomposition(legs, vol_window)
