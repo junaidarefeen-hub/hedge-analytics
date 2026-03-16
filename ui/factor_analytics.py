@@ -333,7 +333,7 @@ def _render_results(result: FactorAnalyticsResult):
 
     # c. Factor beta heatmap
     st.subheader("Factor Beta Heatmap")
-    st.plotly_chart(_beta_heatmap_chart(result), use_container_width=True)
+    st.plotly_chart(_beta_heatmap_chart(result), use_container_width=True, key="fa_heatmap")
 
     # d. Return decomposition
     st.subheader("Return Decomposition")
@@ -459,17 +459,27 @@ def _significance_star(p: float) -> str:
     return ""
 
 
-def _render_return_decomposition(legs: list[tuple[str, LegDecomposition]], *, additive: bool):
+def _render_return_decomposition(
+    legs: list[tuple[str, LegDecomposition]], *, additive: bool, key_prefix: str = "fa",
+):
     """Render return decomposition charts."""
     if len(legs) == 1:
         name, leg = legs[0]
-        st.plotly_chart(_return_decomp_chart(name, leg, additive), use_container_width=True)
+        st.plotly_chart(
+            _return_decomp_chart(name, leg, additive),
+            use_container_width=True,
+            key=f"{key_prefix}_retdecomp_{name}",
+        )
         st.caption(_return_stats(leg))
     else:
         tabs = st.tabs([name for name, _ in legs])
         for tab, (name, leg) in zip(tabs, legs):
             with tab:
-                st.plotly_chart(_return_decomp_chart(name, leg, additive), use_container_width=True)
+                st.plotly_chart(
+                    _return_decomp_chart(name, leg, additive),
+                    use_container_width=True,
+                    key=f"{key_prefix}_retdecomp_{name}",
+                )
                 st.caption(_return_stats(leg))
 
 
@@ -549,17 +559,27 @@ def _return_decomp_chart(label: str, leg: LegDecomposition, additive: bool) -> g
     return fig
 
 
-def _render_vol_decomposition(legs: list[tuple[str, LegDecomposition]], window: int):
+def _render_vol_decomposition(
+    legs: list[tuple[str, LegDecomposition]], window: int, key_prefix: str = "fa",
+):
     """Render rolling vol decomposition as area charts over time."""
     if len(legs) == 1:
         name, leg = legs[0]
-        st.plotly_chart(_rolling_vol_chart(name, leg, window), use_container_width=True)
+        st.plotly_chart(
+            _rolling_vol_chart(name, leg, window),
+            use_container_width=True,
+            key=f"{key_prefix}_voldecomp_{name}",
+        )
         st.caption(_vol_stats(leg))
     else:
         tabs = st.tabs([name for name, _ in legs])
         for tab, (name, leg) in zip(tabs, legs):
             with tab:
-                st.plotly_chart(_rolling_vol_chart(name, leg, window), use_container_width=True)
+                st.plotly_chart(
+                    _rolling_vol_chart(name, leg, window),
+                    use_container_width=True,
+                    key=f"{key_prefix}_voldecomp_{name}",
+                )
                 st.caption(_vol_stats(leg))
 
 

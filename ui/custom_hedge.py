@@ -833,7 +833,7 @@ def _render_fa_results(result: FactorAnalyticsResult):
                 _render_regression_table(leg.table, leg.ols, name)
 
     # Beta heatmap
-    st.plotly_chart(_beta_heatmap_chart(result), use_container_width=True)
+    st.plotly_chart(_beta_heatmap_chart(result), use_container_width=True, key="cha_fa_heatmap")
 
     # Return decomposition
     ret_mode = st.radio(
@@ -843,7 +843,7 @@ def _render_fa_results(result: FactorAnalyticsResult):
         key="cha_fa_return_mode",
         help="Compounded shows (1+r).cumprod(); additive shows r.cumsum() where factor + idio = total exactly.",
     )
-    _render_return_decomposition(legs, additive=ret_mode.startswith("Additive"))
+    _render_return_decomposition(legs, additive=ret_mode.startswith("Additive"), key_prefix="cha_fa")
 
     # Vol decomposition
     vol_window = st.select_slider(
@@ -852,4 +852,4 @@ def _render_fa_results(result: FactorAnalyticsResult):
         value=60,
         key="cha_fa_vol_window",
     )
-    _render_vol_decomposition(legs, vol_window)
+    _render_vol_decomposition(legs, vol_window, key_prefix="cha_fa")
