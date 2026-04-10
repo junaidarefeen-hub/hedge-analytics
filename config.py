@@ -103,6 +103,10 @@ REGIME_N_REGIMES = 3
 REGIME_LABELS = {0: "Low Vol", 1: "Normal", 2: "High Vol"}
 REGIME_METHODS = ["quantile", "kmeans"]
 
+# Correlation regime detection
+CORR_REGIME_N_REGIMES = 3
+CORR_REGIME_LABELS = {0: "Low Corr", 1: "Normal Corr", 2: "High Corr"}
+
 # Rolling optimization
 ROLLING_OPT_WINDOW = 120
 ROLLING_OPT_STEP = 20
@@ -115,6 +119,27 @@ CHA_DEFAULT_HEDGE_NOTIONAL = 10_000_000.0
 REBALANCE_FREQUENCIES = ["weekly", "monthly", "quarterly"]
 DEFAULT_REBALANCE_FREQUENCY = "monthly"
 DEFAULT_LOOKBACK_WINDOW = 120
+
+# ECM MCP Server
+ECM_MCP_URL = "https://mcp.elementcapital.corp/mcp"
+ECM_CREDENTIALS_KEY = "ecm|72c3fb7b2b25e5da"
+ECM_TOKEN_BUFFER_SECONDS = 10
+ECM_REQUEST_TIMEOUT = 60
+
+# Prismatic Factor Gadgets (Quant Equity Dashboard, layout 10052)
+FACTOR_GADGET_IDS = {
+    "10685": "Equal Weight",
+    "10686": "Momentum",
+    "10687": "Size",
+    "10688": "Quality",
+    "10689": "Volatility",
+    "10690": "Value",
+    "10691": "Growth",
+    "10692": "Beta",
+    "10693": "Leverage",
+}
+FACTOR_MODEL_PREFIX = "GS"  # Use GS variant by default (vs MS)
+FACTOR_CACHE_MAX_AGE_HOURS = 24  # local Parquet cache refresh interval
 
 # Factor Analytics
 FA_DEFAULT_LONG_NOTIONAL = 10_000_000.0
