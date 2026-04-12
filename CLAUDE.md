@@ -119,11 +119,13 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 - Beta heatmap rows match active legs (1 row long-only, 3 rows with short); significance stars from OLS p-values
 - Multicollinearity warning via condition number check on design matrix
 
-### `data/factor_loader.py` — GS factor data from Excel
-- Parses `Factor Prices.xlsx` (16 GS factor price indices, 2018–2026)
-- `load_factor_data()`: cached 24hr, returns `FactorData` (prices, returns, ticker/name maps)
+### `data/factor_loader.py` — GS factor data (Prismatic → Parquet cache → Excel fallback)
+- **Source priority**: Prismatic gadgets (layout 10052, gadgets 10685–10693) → local Parquet cache (`data/cache/factor_prices.parquet`) → `Factor Prices.xlsx` fallback
+- Prismatic returns additive cumulative series starting at 0; daily returns = `diff()`. Excel returns price indices; daily returns = `pct_change()`. Both produce simple daily returns.
+- `load_factor_data()`: cached 24hr (`@st.cache_data(ttl=86400)`), returns `FactorData` (prices, returns, ticker/name maps)
 - `align_factor_returns()`: inner join on normalized DatetimeIndex, dropna for clean regression input
 - `clear_factor_cache()`: called by sidebar "Reload factor data" button
+- **Render deployment**: Prismatic MCP is unavailable on Render. The Parquet cache file is committed to git (`.gitignore` exception) so Render always has factor data. On deploy, `is_available()` returns False → loader uses the committed Parquet cache. To update factor data on Render: refresh locally via sidebar button, then commit + push the updated Parquet file.
 
 ### `data/fetcher.py` — yfinance with interval support
 - `validate_interval_date_range()`: enforces yfinance limits (1m→7d, 5m/15m→60d, 1h→730d)
