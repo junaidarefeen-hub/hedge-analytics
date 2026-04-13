@@ -54,7 +54,7 @@ def detect_regimes(
 
     elif method == "kmeans":
         vol_data = rolling_vol.values.reshape(-1, 1)
-        centroids, regime_vals = kmeans2(vol_data, n_regimes, minit="points")
+        centroids, regime_vals = kmeans2(vol_data, n_regimes, minit="points", seed=42)
         # Sort centroids so regime 0 = lowest vol
         order = np.argsort(centroids.flatten())
         remap = {old: new for new, old in enumerate(order)}

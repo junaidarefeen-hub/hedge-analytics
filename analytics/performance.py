@@ -36,15 +36,17 @@ def _absolute_metrics(daily: pd.Series) -> dict[str, float]:
     """Compute absolute performance metrics for a single return series."""
     n = len(daily)
     cum = (1 + daily).cumprod()
-    total = float(cum.iloc[-1] / cum.iloc[0] - 1) if n > 0 else 0.0
+    total = float(cum.iloc[-1] - 1) if n > 0 else 0.0
     ann_ret = (1 + total) ** (ANN / n) - 1 if n > 0 else 0.0
     ann_vol = float(daily.std() * np.sqrt(ANN))
 
-    mean_d = float(daily.mean())
+    # Use excess returns (daily - risk_free) for Sharpe/Sortino, matching backtest.py
+    excess = daily  # risk_free = 0 for performance tab (consistent with DEFAULT_RISK_FREE_RATE)
+    mean_d = float(excess.mean())
     std_d = float(daily.std())
     sharpe = (mean_d / std_d * np.sqrt(ANN)) if std_d > 0 else 0.0
 
-    downside = daily[daily < 0]
+    downside = excess[excess < 0]
     down_std = float(downside.std()) if len(downside) > 1 else 0.0
     sortino = (mean_d / down_std * np.sqrt(ANN)) if down_std > 0 else 0.0
 

@@ -14,16 +14,16 @@ def beta_matrix(returns: pd.DataFrame, benchmarks: list[str]) -> pd.DataFrame:
     for bm in benchmarks:
         if bm not in returns.columns:
             continue
-        bm_var = returns[bm].var()
-        if bm_var == 0:
-            continue
         for tk in tickers:
             if tk not in returns.columns:
                 continue
             overlap = returns[[tk, bm]].dropna()
             if len(overlap) < 2:
                 continue
-            result.loc[tk, bm] = overlap[tk].cov(overlap[bm]) / overlap[bm].var()
+            bm_var = overlap[bm].var()
+            if bm_var == 0:
+                continue
+            result.loc[tk, bm] = overlap[tk].cov(overlap[bm]) / bm_var
     return result
 
 

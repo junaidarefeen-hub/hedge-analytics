@@ -71,7 +71,7 @@ def _compute_metrics(
     daily: pd.Series, cumulative: pd.Series, risk_free: float, label: str,
 ) -> dict[str, float]:
     ann_factor = ANNUALIZATION_FACTOR
-    total_return = float(cumulative.iloc[-1] / cumulative.iloc[0] - 1)
+    total_return = float(cumulative.iloc[-1] - 1)
     n_days = len(daily)
     ann_return = float((1 + total_return) ** (ann_factor / max(n_days, 1)) - 1)
     ann_vol = float(daily.std() * np.sqrt(ann_factor))
@@ -185,7 +185,8 @@ class DynamicBacktestResult:
 def _rebalance_dates(index: pd.DatetimeIndex, freq: str) -> list[pd.Timestamp]:
     """Return first trading day of each week/month/quarter from the DatetimeIndex."""
     if freq == "weekly":
-        groups = index.to_series().groupby(index.isocalendar().week.values * 100 + index.year.values * 10000)
+        iso = index.isocalendar()
+        groups = index.to_series().groupby(iso.week.values * 100 + iso.year.values * 10000)
     elif freq == "monthly":
         groups = index.to_series().groupby([index.year, index.month])
     elif freq == "quarterly":
