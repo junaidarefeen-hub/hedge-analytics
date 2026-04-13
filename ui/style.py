@@ -64,6 +64,13 @@ METRIC_DESCRIPTIONS = {
     "P(loss > 5%)": "Probability of losing more than 5% of portfolio value.",
     "P(loss > 10%)": "Probability of losing more than 10% of portfolio value.",
     "P(loss > 20%)": "Probability of losing more than 20% of portfolio value.",
+    # Price performance metrics
+    "Excess Return": "Cumulative return minus reference return over the period.",
+    "Ann. Excess Return": "Annualized excess return over the reference.",
+    "Beta": "Sensitivity to benchmark: Cov(ticker, benchmark) / Var(benchmark).",
+    "Beta-Adj Return": "Cumulative return after removing beta exposure: ticker - beta x benchmark.",
+    "Ann. Alpha": "Annualized beta-adjusted return — the return not explained by market exposure.",
+    "Residual Volatility": "Annualized volatility of beta-adjusted (residual) returns.",
 }
 
 

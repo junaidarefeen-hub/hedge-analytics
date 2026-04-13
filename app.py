@@ -20,6 +20,7 @@ from ui.custom_hedge import render_custom_hedge_tab
 from ui.factor_analytics import render_factor_analytics_tab
 from ui.montecarlo import render_montecarlo_tab
 from ui.optimizer import render_optimizer_tab
+from ui.performance import render_performance_tab
 from ui.stress import render_stress_tab
 from ui.timeseries import rolling_beta_chart, rolling_correlation_chart
 from utils.validation import check_data_sufficiency
@@ -81,8 +82,8 @@ except Exception as e:
     factor_data = None
 
 # Tabs
-tab_data, tab_corr, tab_beta, tab_optim, tab_compare, tab_custom, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime, tab_factor = st.tabs(
-    ["Data", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Custom Hedge", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime", "Factor Analytics"]
+tab_data, tab_perf, tab_corr, tab_beta, tab_optim, tab_compare, tab_custom, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime, tab_factor = st.tabs(
+    ["Data", "Price Performance", "Correlation", "Beta", "Hedge Optimizer", "Strategy Compare", "Custom Hedge", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime", "Factor Analytics"]
 )
 
 # --- Data Tab ---
@@ -135,6 +136,10 @@ with tab_data:
                 use_container_width=True,
                 height=350,
             )
+
+# --- Price Performance Tab ---
+with tab_perf:
+    render_performance_tab(returns, params)
 
 # --- Correlation Tab ---
 with tab_corr:
