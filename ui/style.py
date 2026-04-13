@@ -186,6 +186,15 @@ def inject_css():
             border-bottom: 2px solid #2563eb;
         }
 
+        /* Tab group dividers — visual separators between Analysis | Hedging | Deep Dives */
+        /* Group 2 starts at tab 6, Group 3 starts at tab 12 (1-indexed) */
+        .stTabs [data-baseweb="tab-list"] > button:nth-child(6),
+        .stTabs [data-baseweb="tab-list"] > button:nth-child(12) {
+            margin-left: 0.5rem;
+            border-left: 2px solid #cbd5e1;
+            padding-left: 1.4rem;
+        }
+
         /* Sidebar polish */
         section[data-testid="stSidebar"] {
             border-right: 1px solid #e2e8f0;

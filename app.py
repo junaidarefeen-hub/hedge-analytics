@@ -83,9 +83,17 @@ except Exception as e:
     factor_data = None
 
 # Tabs
-tab_data, tab_perf, tab_corr, tab_beta, tab_pairs, tab_optim, tab_compare, tab_custom, tab_backtest, tab_mc, tab_stress, tab_dd, tab_regime, tab_factor = st.tabs(
-    ["Data", "Price Performance", "Correlation", "Beta", "Pairs/Spread", "Hedge Optimizer", "Strategy Compare", "Custom Hedge", "Backtest", "Monte Carlo", "Stress Test", "Drawdown", "Regime", "Factor Analytics"]
-)
+# Tab groups:
+#   Analysis (1-5):   Data · Price Performance · Correlation · Beta · Pairs/Spread
+#   Hedging  (6-11):  Hedge Optimizer · Strategy Compare · Backtest · Monte Carlo · Stress Test · Drawdown
+#   Deep     (12-14): Custom Hedge · Factor Analytics · Regime
+(tab_data, tab_perf, tab_corr, tab_beta, tab_pairs,
+ tab_optim, tab_compare, tab_backtest, tab_mc, tab_stress, tab_dd,
+ tab_custom, tab_factor, tab_regime) = st.tabs([
+    "Data", "Price Performance", "Correlation", "Beta", "Pairs/Spread",
+    "Hedge Optimizer", "Strategy Compare", "Backtest", "Monte Carlo", "Stress Test", "Drawdown",
+    "Custom Hedge", "Factor Analytics", "Regime",
+])
 
 # --- Data Tab ---
 with tab_data:
