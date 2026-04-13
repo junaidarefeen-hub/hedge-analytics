@@ -171,6 +171,7 @@ def compute_pairs_analysis(
     window: int,
     start_date: pd.Timestamp | str,
     end_date: pd.Timestamp | str,
+    spread_type: str = "log",
 ) -> PairsResult:
     """Compute pairs/spread analysis between two tickers.
 
@@ -186,6 +187,10 @@ def compute_pairs_analysis(
         Rolling window for z-score and correlation.
     start_date, end_date : date-like
         Date range for analysis.
+    spread_type : str
+        ``"log"`` for log price spread (scale-invariant, better for long
+        lookbacks) or ``"price"`` for raw price spread (intuitive dollar
+        terms, better for short horizons).
     """
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date)
@@ -201,19 +206,24 @@ def compute_pairs_analysis(
             f"for a {window}-day rolling window."
         )
 
-    # Log prices
-    log_a = np.log(p[ticker_a])
-    log_b = np.log(p[ticker_b])
+    # Build series for OLS and spread depending on spread type
+    if spread_type == "log":
+        series_a = np.log(p[ticker_a])
+        series_b = np.log(p[ticker_b])
+    else:
+        series_a = p[ticker_a]
+        series_b = p[ticker_b]
 
-    # Hedge ratio via OLS: log(A) = alpha + beta * log(B)
-    T = len(log_a)
-    X = np.column_stack([log_b.values, np.ones(T)])
-    coeffs, _, _, _ = np.linalg.lstsq(X, log_a.values, rcond=None)
+    # Hedge ratio via OLS: A = alpha + beta * B
+    T = len(series_a)
+    X = np.column_stack([series_b.values, np.ones(T)])
+    coeffs, _, _, _ = np.linalg.lstsq(X, series_a.values, rcond=None)
     hedge_ratio = float(coeffs[0])
 
-    # Spread: log(A) - beta * log(B)
-    spread = log_a - hedge_ratio * log_b
-    spread.name = f"{ticker_a} / {ticker_b} spread"
+    # Spread: A - beta * B
+    spread = series_a - hedge_ratio * series_b
+    label = "Log Spread" if spread_type == "log" else "Price Spread"
+    spread.name = f"{ticker_a} / {ticker_b} {label.lower()}"
 
     # Rolling statistics
     roll_mean = spread.rolling(window=window, min_periods=window).mean()

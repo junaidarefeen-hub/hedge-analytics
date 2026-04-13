@@ -101,10 +101,12 @@ def _spread_chart(result) -> go.Figure:
     ))
     _add_label(fig, result.spread, "Spread", ".4f")
 
+    is_log = "log" in result.spread.name
+    label = "Log Price Spread" if is_log else "Price Spread"
     fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
-        title="Log Price Spread with Bollinger Bands",
-        xaxis_title="", yaxis_title="Log Spread",
+        title=f"{label} with Bollinger Bands",
+        xaxis_title="", yaxis_title=label,
         height=350, margin=dict(r=120),
     )
     return fig
@@ -193,7 +195,7 @@ def render_pairs_tab(prices, returns, params: dict) -> None:
         return
 
     # --- Controls ---
-    c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 1])
+    c1, c2, c3, c4, c5, c6 = st.columns([1, 1, 1, 1, 1, 1])
 
     with c1:
         ticker_a = st.selectbox("Ticker A", options=all_tickers, index=0, key="pairs_a")
@@ -207,16 +209,25 @@ def render_pairs_tab(prices, returns, params: dict) -> None:
             index=ROLLING_WINDOW_OPTIONS.index(DEFAULT_ROLLING_WINDOW),
             key="pairs_window",
         )
+    with c4:
+        spread_type = st.selectbox(
+            "Spread Type",
+            options=["log", "price"],
+            index=0,
+            key="pairs_spread_type",
+            help="**Log**: scale-invariant, better for long lookbacks and cointegration tests. "
+                 "**Price**: raw dollar spread, more intuitive for short-horizon P&L thinking.",
+        )
 
     min_date = returns.index.min().date()
     max_date = returns.index.max().date()
     default_start = max(params["start_date"], min_date)
     default_end = min(params["end_date"], max_date)
 
-    with c4:
+    with c5:
         start = st.date_input("Start", value=default_start, min_value=min_date,
                                max_value=max_date, key="pairs_start")
-    with c5:
+    with c6:
         end = st.date_input("End", value=default_end, min_value=min_date,
                              max_value=max_date, key="pairs_end")
 
@@ -247,6 +258,7 @@ def render_pairs_tab(prices, returns, params: dict) -> None:
     try:
         result = compute_pairs_analysis(
             prices, returns, ticker_a, ticker_b, window, start, end,
+            spread_type=spread_type,
         )
     except ValueError as e:
         st.error(str(e))
