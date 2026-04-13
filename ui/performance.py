@@ -164,10 +164,15 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
     min_date = returns.index.min().date()
     max_date = returns.index.max().date()
 
+    # Clamp sidebar defaults to the actual data range (returns drops the
+    # first price row via pct_change, so start_date can precede min_date).
+    default_start = max(params["start_date"], min_date)
+    default_end = min(params["end_date"], max_date)
+
     with c2:
         start = st.date_input(
             "Start date",
-            value=params["start_date"],
+            value=default_start,
             min_value=min_date,
             max_value=max_date,
             key="perf_start",
@@ -175,7 +180,7 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
     with c3:
         end = st.date_input(
             "End date",
-            value=params["end_date"],
+            value=default_end,
             min_value=min_date,
             max_value=max_date,
             key="perf_end",
