@@ -109,6 +109,22 @@ def _format_consolidated(df: pd.DataFrame) -> pd.DataFrame:
 # Charts
 # ---------------------------------------------------------------------------
 
+def _add_endpoint_label(fig: go.Figure, series: pd.Series, name: str) -> None:
+    """Add a text annotation at the final point of a series."""
+    if series.empty:
+        return
+    last_x = series.index[-1]
+    last_y = float(series.iloc[-1])
+    fig.add_annotation(
+        x=last_x,
+        y=last_y,
+        text=f"  {name} {last_y:.1%}",
+        showarrow=False,
+        xanchor="left",
+        font=dict(size=11, color="#334155"),
+    )
+
+
 def _cumulative_chart(
     data: pd.DataFrame,
     title: str,
@@ -116,7 +132,7 @@ def _cumulative_chart(
     benchmark_col: str | None = None,
     peer_col: str | None = None,
 ) -> go.Figure:
-    """Build a cumulative return line chart."""
+    """Build a cumulative return line chart with endpoint labels."""
     fig = go.Figure()
 
     for tk in chart_tickers:
@@ -130,6 +146,7 @@ def _cumulative_chart(
                 line=dict(width=2),
                 hovertemplate="%{x|%b %d, %Y}<br>%{y:.2%}<extra></extra>",
             ))
+            _add_endpoint_label(fig, series, tk)
 
     if benchmark_col and benchmark_col in data.columns:
         series = data[benchmark_col].dropna()
@@ -141,6 +158,7 @@ def _cumulative_chart(
             line=dict(width=2, dash="dash", color="#64748b"),
             hovertemplate="%{x|%b %d, %Y}<br>%{y:.2%}<extra></extra>",
         ))
+        _add_endpoint_label(fig, series, benchmark_col)
 
     if peer_col and peer_col in data.columns:
         series = data[peer_col].dropna()
@@ -152,6 +170,7 @@ def _cumulative_chart(
             line=dict(width=2, dash="dot", color="#ca8a04"),
             hovertemplate="%{x|%b %d, %Y}<br>%{y:.2%}<extra></extra>",
         ))
+        _add_endpoint_label(fig, series, peer_col)
 
     fig.update_layout(**PLOTLY_LAYOUT)
     fig.update_layout(
@@ -160,6 +179,8 @@ def _cumulative_chart(
         yaxis_title="Cumulative Return",
         yaxis_tickformat=".0%",
         height=380,
+        # Add right margin so endpoint labels aren't clipped
+        margin=dict(r=120),
     )
     return fig
 
