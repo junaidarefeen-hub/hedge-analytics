@@ -77,6 +77,11 @@ METRIC_DESCRIPTIONS = {
     "Beta-Adj Return": "Cumulative return after removing beta exposure: ticker - beta x benchmark.",
     "Ann. Alpha": "Annualized beta-adjusted return — the return not explained by market exposure.",
     "Residual Volatility": "Annualized volatility of beta-adjusted (residual) returns.",
+    # Pairs / Spread metrics
+    "Hedge Ratio (β)": "OLS slope from log(A) ~ log(B). Units of B to short per unit of A.",
+    "Half-Life (days)": "Expected trading days for the spread to close half the current dislocation.",
+    "ADF p-value": "Augmented Dickey-Fuller test. Below 0.05 suggests the spread is mean-reverting.",
+    "Current Z-Score": "Current spread dislocation in standard deviations from the rolling mean.",
 }
 
 
