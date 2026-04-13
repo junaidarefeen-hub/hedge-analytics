@@ -254,15 +254,43 @@ def render_pairs_tab(prices, returns, params: dict) -> None:
 
     # --- Metric cards ---
     m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("Current Z-Score", f"{result.current_zscore:.2f}")
-    m2.metric("Z-Score Percentile", f"{result.zscore_percentile:.0f}%")
+    m1.metric(
+        "Current Z-Score", f"{result.current_zscore:.2f}",
+        help="How far the spread is from its rolling mean, in standard deviations. "
+             "±1 = mild, ±2 = notable dislocation, ±3 = extreme. "
+             "Positive means A is rich vs B; negative means A is cheap vs B.",
+    )
+    m2.metric(
+        "Z-Score Percentile", f"{result.zscore_percentile:.0f}%",
+        help="Where the current z-score ranks in the historical distribution. "
+             "95th = A is richer vs B than 95% of history. "
+             "5th = A is cheaper vs B than 95% of history.",
+    )
     hl_display = f"{result.half_life:.1f}" if result.half_life < 1000 else "∞"
-    m3.metric("Half-Life (days)", hl_display)
-    m4.metric("ADF p-value", f"{result.adf_pvalue:.3f}")
-    m5.metric("Hedge Ratio (β)", f"{result.hedge_ratio:.3f}")
+    m3.metric(
+        "Half-Life (days)", hl_display,
+        help="Expected number of trading days for the spread dislocation to close by half. "
+             "Lower = faster mean reversion. 10 days = fast, 50+ = slow/unreliable, ∞ = no evidence of reversion.",
+    )
+    m4.metric(
+        "ADF p-value", f"{result.adf_pvalue:.3f}",
+        help="Augmented Dickey-Fuller test for stationarity. "
+             "Below 0.05 = the spread is statistically mean-reverting (good for pairs trading). "
+             "Above 0.10 = no evidence of mean reversion — the spread may be a random walk.",
+    )
+    m5.metric(
+        "Hedge Ratio (β)", f"{result.hedge_ratio:.3f}",
+        help="OLS slope from log(A) ~ log(B). The number of units of B to short per unit of A "
+             "to construct a market-neutral spread. β = 1.2 means short 1.2 shares of B per long share of A.",
+    )
     rc_clean = result.rolling_corr.dropna()
     latest_corr = f"{rc_clean.iloc[-1]:.3f}" if len(rc_clean) > 0 else "N/A"
-    m6.metric("Correlation (latest)", latest_corr)
+    m6.metric(
+        "Correlation (latest)", latest_corr,
+        help="Latest rolling correlation between the two tickers' returns. "
+             "Above 0.7 = strong relationship (spread model is reliable). "
+             "A sudden drop means the pair relationship may be breaking down.",
+    )
 
     # --- Charts ---
     st.plotly_chart(_spread_chart(result), use_container_width=True)
@@ -290,6 +318,18 @@ def render_pairs_tab(prices, returns, params: dict) -> None:
                 f"{result.zscore_percentile:.1f}%",
                 str(len(result.spread)),
                 f"{result.spread.index[0].strftime('%Y-%m-%d')} to {result.spread.index[-1].strftime('%Y-%m-%d')}",
+            ],
+            "Description": [
+                "OLS slope from log(A) ~ log(B). Units of B to short per unit of A.",
+                "Trading days for the spread to close half the dislocation (AR(1) estimate).",
+                "Augmented Dickey-Fuller t-statistic. More negative = stronger stationarity.",
+                "ADF significance. < 0.05 = mean-reverting, > 0.10 = no evidence.",
+                "Long-run average of the log spread over the full period.",
+                "Long-run standard deviation of the log spread.",
+                "Current spread dislocation in standard deviations from the rolling mean.",
+                "Percentage of historical z-scores below the current reading.",
+                "Number of overlapping trading days used in the analysis.",
+                "Start and end dates of the analysis window.",
             ],
         })
         st.dataframe(stats, use_container_width=True, hide_index=True)
