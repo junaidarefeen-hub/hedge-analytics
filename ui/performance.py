@@ -47,20 +47,61 @@ def _apply_pending_dates() -> None:
 
 _PCT_METRICS = {
     "Total Return", "Ann. Return", "Ann. Volatility", "Max Drawdown",
-    "Excess Return", "Ann. Excess Return", "Tracking Error",
+    "Excess Return (vs Index)", "Ann. Excess Return (vs Index)", "Tracking Error (vs Index)",
+    "Excess Return (vs Peers)", "Ann. Excess Return (vs Peers)", "Tracking Error (vs Peers)",
     "Beta-Adj Return", "Ann. Alpha", "Residual Volatility",
 }
 
+_PLACEHOLDER = "\u2014"  # em-dash for non-applicable cells
 
-def _format_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Format a metrics DataFrame for display (rows=metrics, cols=tickers)."""
-    fmt = df.copy()
+
+def _build_consolidated_table(result) -> pd.DataFrame:
+    """Merge absolute, relative, and beta-adjusted into one table.
+
+    Rows = metrics (grouped by section), cols = tickers + benchmark + peer group.
+    Non-applicable cells (e.g. benchmark's excess return vs itself) show an em-dash.
+    """
+    all_cols = list(result.absolute.columns)
+
+    # Rename relative metrics to distinguish index vs peers
+    rel_bench = result.relative_bench.rename(index={
+        "Excess Return": "Excess Return (vs Index)",
+        "Ann. Excess Return": "Ann. Excess Return (vs Index)",
+        "Tracking Error": "Tracking Error (vs Index)",
+        "Information Ratio": "Information Ratio (vs Index)",
+    })
+
+    sections = [result.absolute, rel_bench, result.beta_adjusted]
+
+    if result.relative_peers is not None and not result.relative_peers.empty:
+        rel_peers = result.relative_peers.rename(index={
+            "Excess Return": "Excess Return (vs Peers)",
+            "Ann. Excess Return": "Ann. Excess Return (vs Peers)",
+            "Tracking Error": "Tracking Error (vs Peers)",
+            "Information Ratio": "Information Ratio (vs Peers)",
+        })
+        # Insert peer-relative right after bench-relative
+        sections = [result.absolute, rel_bench, rel_peers, result.beta_adjusted]
+
+    # Reindex each section to all_cols (fills missing benchmark/peer cols with NaN)
+    aligned = [s.reindex(columns=all_cols) for s in sections]
+    merged = pd.concat(aligned)
+
+    return merged
+
+
+def _format_consolidated(df: pd.DataFrame) -> pd.DataFrame:
+    """Format the consolidated table: percentages, ratios, and em-dashes."""
+    fmt = df.copy().astype(object)
     for col in fmt.columns:
-        fmt[col] = fmt.index.map(
-            lambda idx, c=col: f"{df.loc[idx, c]:.2%}"
-            if idx in _PCT_METRICS
-            else f"{df.loc[idx, c]:.2f}"
-        )
+        for idx in fmt.index:
+            val = df.loc[idx, col]
+            if pd.isna(val):
+                fmt.loc[idx, col] = _PLACEHOLDER
+            elif idx in _PCT_METRICS:
+                fmt.loc[idx, col] = f"{val:.2%}"
+            else:
+                fmt.loc[idx, col] = f"{val:.2f}"
     return fmt
 
 
@@ -244,28 +285,10 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
         st.error(str(e))
         return
 
-    # --- Absolute Performance ---
-    st.subheader("Absolute Performance")
-    render_metrics_table(_format_table(result.absolute))
-
-    # --- Relative vs Benchmark ---
-    st.subheader(f"Relative Performance vs {benchmark}")
-    if result.relative_bench.empty:
-        st.info("No relative benchmark data available.")
-    else:
-        render_metrics_table(_format_table(result.relative_bench))
-
-    # --- Relative vs Peers ---
-    if result.relative_peers is not None and not result.relative_peers.empty:
-        st.subheader("Relative Performance vs Peer Group")
-        render_metrics_table(_format_table(result.relative_peers))
-
-    # --- Beta-Adjusted ---
-    st.subheader(f"Beta-Adjusted Performance vs {benchmark}")
-    if result.beta_adjusted.empty:
-        st.info("No beta-adjusted data available.")
-    else:
-        render_metrics_table(_format_table(result.beta_adjusted))
+    # --- Consolidated Performance Table ---
+    st.subheader("Performance Statistics")
+    consolidated = _build_consolidated_table(result)
+    render_metrics_table(_format_consolidated(consolidated))
 
     # --- Charts ---
     st.subheader("Cumulative Performance")
