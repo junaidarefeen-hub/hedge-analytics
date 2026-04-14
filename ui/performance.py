@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analytics.performance import compute_performance_stats
-from ui.style import PLOTLY_LAYOUT, render_metrics_table
+from ui.style import METRIC_DESCRIPTIONS, PLOTLY_LAYOUT
 from ui.weight_helpers import (
     handle_normalize,
     render_weight_inputs,
@@ -94,19 +94,103 @@ def _build_consolidated_table(result, show_peers: bool = True) -> pd.DataFrame:
     return merged
 
 
-def _format_consolidated(df: pd.DataFrame) -> pd.DataFrame:
-    """Format the consolidated table: percentages, ratios, and em-dashes."""
-    fmt = df.copy().astype(object)
-    for col in fmt.columns:
-        for idx in fmt.index:
+def _fmt_pct(val: float) -> str:
+    """Format a percentage with parentheses for negatives: 12.34% or (12.34)%."""
+    if val < 0:
+        return f"({abs(val):.2%})"
+    return f"{val:.2%}"
+
+
+def _fmt_ratio(val: float) -> str:
+    """Format a ratio with parentheses for negatives: 1.23 or (1.23)."""
+    if val < 0:
+        return f"({abs(val):.2f})"
+    return f"{val:.2f}"
+
+
+def _color_class(val: float) -> str:
+    """Return CSS class for positive/negative coloring."""
+    if val > 0:
+        return "mt-pos"
+    elif val < 0:
+        return "mt-neg"
+    return ""
+
+
+def _render_performance_table(df: pd.DataFrame) -> None:
+    """Render the consolidated performance table with color-coded values.
+
+    Green for positive, red for negative. Percentages use (x.xx)% for negatives.
+    """
+    import html as html_mod
+
+    rows_html = []
+    for idx in df.index:
+        desc = METRIC_DESCRIPTIONS.get(idx, "")
+        escaped_idx = html_mod.escape(str(idx))
+        escaped_desc = html_mod.escape(desc)
+
+        cells = []
+        for col in df.columns:
             val = df.loc[idx, col]
             if pd.isna(val):
-                fmt.loc[idx, col] = _PLACEHOLDER
+                cells.append(f'<td class="mt-val">{_PLACEHOLDER}</td>')
             elif idx in _PCT_METRICS:
-                fmt.loc[idx, col] = f"{val:.2%}"
+                cls = _color_class(val)
+                cells.append(f'<td class="mt-val {cls}">{_fmt_pct(val)}</td>')
             else:
-                fmt.loc[idx, col] = f"{val:.2f}"
-    return fmt
+                cls = _color_class(val)
+                cells.append(f'<td class="mt-val {cls}">{_fmt_ratio(val)}</td>')
+
+        if desc:
+            metric_cell = (
+                f'<td class="mt-metric" title="{escaped_desc}">'
+                f'<span class="mt-tip" data-tip="{escaped_desc}">{escaped_idx}</span></td>'
+            )
+        else:
+            metric_cell = f'<td class="mt-metric">{escaped_idx}</td>'
+        rows_html.append(f'<tr>{metric_cell}{"".join(cells)}</tr>')
+
+    header_cells = "".join(
+        f'<th class="mt-hdr mt-hdr-val">{html_mod.escape(str(col))}</th>'
+        for col in df.columns
+    )
+
+    table_html = f"""
+    <style>
+    .mt-wrap {{ overflow-x:auto; border:1px solid #e2e8f0; border-radius:8px; }}
+    .mt-wrap table {{ width:100%; border-collapse:collapse; font-family:Inter,system-ui,sans-serif; }}
+    .mt-hdr {{ padding:8px 12px; border-bottom:2px solid #cbd5e1; font-size:13px;
+               font-weight:600; color:#475569; text-align:left; }}
+    .mt-hdr-val {{ text-align:right; }}
+    .mt-metric {{ padding:6px 12px; border-bottom:1px solid #e2e8f0; font-weight:500;
+                  font-size:13px; position:relative; }}
+    .mt-val {{ padding:6px 12px; border-bottom:1px solid #e2e8f0; text-align:right; font-size:13px; }}
+    .mt-pos {{ color: #16a34a; }}
+    .mt-neg {{ color: #dc2626; }}
+    .mt-tip {{ cursor:help; text-decoration:underline dotted #94a3b8;
+               text-underline-offset:3px; position:relative; display:inline-block; }}
+    .mt-tip::after {{
+        content: attr(data-tip);
+        position: absolute; left: 0; bottom: 100%; margin-bottom: 6px;
+        background: #1e293b; color: #f8fafc; padding: 6px 10px;
+        border-radius: 6px; font-size: 12px; font-weight: 400;
+        line-height: 1.4; white-space: normal; width: max-content; max-width: 320px;
+        opacity: 0; pointer-events: none; transition: opacity 0.15s; z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }}
+    .mt-tip:hover::after {{ opacity: 1; }}
+    .mt-hint {{ font-size:11px; color:#94a3b8; margin-top:4px; padding-left:4px; }}
+    </style>
+    <div class="mt-wrap">
+    <table>
+        <thead><tr><th class="mt-hdr">Metric</th>{header_cells}</tr></thead>
+        <tbody>{''.join(rows_html)}</tbody>
+    </table>
+    </div>
+    <p class="mt-hint">Hover over metric names for descriptions.</p>
+    """
+    st.html(table_html)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +426,7 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
     # --- Consolidated Performance Table ---
     st.subheader("Performance Statistics")
     consolidated = _build_consolidated_table(result, show_peers=show_peers)
-    render_metrics_table(_format_consolidated(consolidated))
+    _render_performance_table(consolidated)
 
     # --- Charts ---
     st.subheader("Cumulative Performance")
