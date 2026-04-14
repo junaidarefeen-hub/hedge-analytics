@@ -86,21 +86,25 @@ def _relative_metrics(ticker_daily: pd.Series, ref_daily: pd.Series) -> dict[str
     }
 
 
-def _beta_adjusted_metrics(
+def _compute_beta(
     ticker_daily: pd.Series, bench_daily: pd.Series,
-) -> dict[str, float]:
-    """Compute beta and beta-adjusted performance metrics."""
+) -> float:
+    """Compute Cov/Var beta between ticker and benchmark."""
     bench_var = float(bench_daily.var())
     if bench_var > 0:
-        beta = float(ticker_daily.cov(bench_daily) / bench_var)
-    else:
-        beta = 0.0
+        return float(ticker_daily.cov(bench_daily) / bench_var)
+    return 0.0
 
+
+def _beta_adjusted_metrics(
+    ticker_daily: pd.Series, bench_daily: pd.Series, beta: float,
+) -> dict[str, float]:
+    """Compute beta-adjusted performance metrics using a pre-computed beta."""
     adj = ticker_daily - beta * bench_daily
     n = len(adj)
 
     cum_adj = (1 + adj).cumprod()
-    ba_total = float(cum_adj.iloc[-1] / cum_adj.iloc[0] - 1) if n > 0 else 0.0
+    ba_total = float(cum_adj.iloc[-1] - 1) if n > 0 else 0.0
     ann_alpha = (1 + ba_total) ** (ANN / n) - 1 if n > 0 else 0.0
     resid_vol = float(adj.std() * np.sqrt(ANN))
 
@@ -124,6 +128,8 @@ def compute_performance_stats(
     end_date: pd.Timestamp | str,
     peer_tickers: list[str] | None = None,
     peer_weights: np.ndarray | None = None,
+    beta_start_date: pd.Timestamp | str | None = None,
+    beta_end_date: pd.Timestamp | str | None = None,
 ) -> PerformanceResult:
     """Compute absolute, relative (bench + peers), and beta-adjusted stats.
 
@@ -136,12 +142,15 @@ def compute_performance_stats(
     benchmark : str
         Benchmark ticker (column in ``returns``).
     start_date, end_date : date-like
-        Date range for analysis.
+        Date range for performance analysis.
     peer_tickers : list[str] | None
         Optional peer group tickers for peer-relative stats.
     peer_weights : np.ndarray | None
         Decimal weights (sums to ~1.0) for peer basket. If *None*,
         equal-weight across ``peer_tickers``.
+    beta_start_date, beta_end_date : date-like | None
+        Optional separate date range for beta estimation. If *None*,
+        beta is computed on the same range as performance stats.
     """
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date)
@@ -155,8 +164,15 @@ def compute_performance_stats(
             f"Only {len(ret)} observation(s) in the selected date range — need at least 2."
         )
 
+    # Separate beta estimation window (falls back to performance range)
+    b_start = pd.Timestamp(beta_start_date) if beta_start_date is not None else start
+    b_end = pd.Timestamp(beta_end_date) if beta_end_date is not None else end
+    beta_mask = (returns.index >= b_start) & (returns.index <= b_end)
+    beta_ret = returns.loc[beta_mask].copy()
+
     # Benchmark daily returns
     bench = ret[benchmark].dropna()
+    bench_beta = beta_ret[benchmark].dropna()
 
     # Build peer basket if provided
     peer_basket: pd.Series | None = None
@@ -203,7 +219,7 @@ def compute_performance_stats(
 
         tk_daily = ret[tk].dropna()
 
-        # Overlap with benchmark
+        # Overlap with benchmark (performance range)
         common_b = tk_daily.index.intersection(bench.index)
         if len(common_b) < 2:
             logger.warning(f"Ticker {tk}: <2 overlapping dates with benchmark — skipping.")
@@ -219,12 +235,22 @@ def compute_performance_stats(
         # Relative vs benchmark
         rel_bench_cols[tk] = _relative_metrics(tk_b, bn_b)
 
-        # Beta-adjusted
-        ba_metrics = _beta_adjusted_metrics(tk_b, bn_b)
+        # Beta — computed on the separate beta estimation window
+        if tk in beta_ret.columns:
+            tk_beta_daily = beta_ret[tk].dropna()
+            common_beta = tk_beta_daily.index.intersection(bench_beta.index)
+            if len(common_beta) >= 2:
+                beta_val = _compute_beta(tk_beta_daily.loc[common_beta], bench_beta.loc[common_beta])
+            else:
+                beta_val = _compute_beta(tk_b, bn_b)  # fallback to perf range
+        else:
+            beta_val = _compute_beta(tk_b, bn_b)
+
+        # Beta-adjusted metrics (applied on the performance range using the estimated beta)
+        ba_metrics = _beta_adjusted_metrics(tk_b, bn_b, beta_val)
         beta_adj_cols[tk] = ba_metrics
 
         # Cumulative beta-adjusted
-        beta_val = ba_metrics["Beta"]
         ba_daily = tk_b - beta_val * bn_b
         cum_ba_series[tk] = (1 + ba_daily).cumprod()
 

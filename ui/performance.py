@@ -55,13 +55,17 @@ _PCT_METRICS = {
 _PLACEHOLDER = "\u2014"  # em-dash for non-applicable cells
 
 
-def _build_consolidated_table(result) -> pd.DataFrame:
+def _build_consolidated_table(result, show_peers: bool = True) -> pd.DataFrame:
     """Merge absolute, relative, and beta-adjusted into one table.
 
     Rows = metrics (grouped by section), cols = tickers + benchmark + peer group.
     Non-applicable cells (e.g. benchmark's excess return vs itself) show an em-dash.
     """
     all_cols = list(result.absolute.columns)
+
+    # Optionally strip peer group column
+    if not show_peers:
+        all_cols = [c for c in all_cols if c != "Peer Group"]
 
     # Rename relative metrics to distinguish index vs peers
     rel_bench = result.relative_bench.rename(index={
@@ -73,7 +77,7 @@ def _build_consolidated_table(result) -> pd.DataFrame:
 
     sections = [result.absolute, rel_bench, result.beta_adjusted]
 
-    if result.relative_peers is not None and not result.relative_peers.empty:
+    if show_peers and result.relative_peers is not None and not result.relative_peers.empty:
         rel_peers = result.relative_peers.rename(index={
             "Excess Return": "Excess Return (vs Peers)",
             "Ann. Excess Return": "Ann. Excess Return (vs Peers)",
@@ -268,25 +272,52 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
             st.session_state["perf_pending_end"] = ref_end
             st.rerun()
 
+    # --- Beta estimation controls ---
+    with st.expander("Beta Settings", expanded=False):
+        st.caption(
+            "Beta is estimated on a separate date window (default: trailing 1 year from "
+            "the performance end date). Adjust to control the lookback used for beta."
+        )
+        bc1, bc2 = st.columns(2)
+        # Default beta window: 1 year trailing from the performance end date
+        default_beta_end = end
+        default_beta_start = max(
+            min_date,
+            (pd.Timestamp(end) - pd.Timedelta(days=365)).date()
+            if hasattr(end, "year") else min_date,
+        )
+        with bc1:
+            beta_start = st.date_input(
+                "Beta start date", value=default_beta_start,
+                min_value=min_date, max_value=max_date, key="perf_beta_start",
+            )
+        with bc2:
+            beta_end = st.date_input(
+                "Beta end date", value=default_beta_end,
+                min_value=min_date, max_value=max_date, key="perf_beta_end",
+            )
+
     # --- Peer Group controls ---
     stock_tickers = [t for t in params.get("stock_tickers", []) if t != benchmark]
     available_peers = [t for t in all_tickers if t != benchmark]
 
     with st.expander("Peer Group Settings", expanded=False):
-        peer_tickers = st.multiselect(
-            "Peer tickers",
-            options=available_peers,
-            default=stock_tickers[:10] if stock_tickers else available_peers[:5],
-            key="perf_peers",
-        )
-        if peer_tickers:
-            sync_weights("perf_peer", peer_tickers)
-            peer_weights_raw = render_weight_inputs(
-                "perf_peer", peer_tickers, "perf_peer_normalize",
+        show_peers = st.checkbox("Show peer group results", value=False, key="perf_show_peers")
+        peer_tickers: list[str] = []
+        pw = None
+        if show_peers:
+            peer_tickers = st.multiselect(
+                "Peer tickers",
+                options=available_peers,
+                default=stock_tickers[:10] if stock_tickers else available_peers[:5],
+                key="perf_peers",
             )
-            pw = weights_array(peer_weights_raw, peer_tickers)
-        else:
-            pw = None
+            if peer_tickers:
+                sync_weights("perf_peer", peer_tickers)
+                peer_weights_raw = render_weight_inputs(
+                    "perf_peer", peer_tickers, "perf_peer_normalize",
+                )
+                pw = weights_array(peer_weights_raw, peer_tickers)
 
     # --- Determine tickers to analyse (all loaded tickers except benchmark) ---
     analyse_tickers = [t for t in all_tickers if t != benchmark]
@@ -301,6 +332,8 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
             end_date=end,
             peer_tickers=peer_tickers if peer_tickers else None,
             peer_weights=pw,
+            beta_start_date=beta_start,
+            beta_end_date=beta_end,
         )
     except ValueError as e:
         st.error(str(e))
@@ -308,7 +341,7 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
 
     # --- Consolidated Performance Table ---
     st.subheader("Performance Statistics")
-    consolidated = _build_consolidated_table(result)
+    consolidated = _build_consolidated_table(result, show_peers=show_peers)
     render_metrics_table(_format_consolidated(consolidated))
 
     # --- Charts ---
@@ -326,7 +359,7 @@ def render_performance_tab(returns: pd.DataFrame, params: dict) -> None:
     )
 
     bench_col = f"{benchmark} (benchmark)"
-    peer_col = "Peer Group" if result.peer_basket_returns is not None else None
+    peer_col = "Peer Group" if (show_peers and result.peer_basket_returns is not None) else None
 
     # Chart 1: Absolute cumulative
     st.plotly_chart(
