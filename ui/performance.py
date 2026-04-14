@@ -54,6 +54,14 @@ _PCT_METRICS = {
 
 _PLACEHOLDER = "\u2014"  # em-dash for non-applicable cells
 
+# Metrics that get green/red color-coding (return-oriented metrics only)
+_RETURN_METRICS = {
+    "Total Return", "Ann. Return",
+    "Excess Return (vs Index)", "Ann. Excess Return (vs Index)",
+    "Excess Return (vs Peers)", "Ann. Excess Return (vs Peers)",
+    "Beta-Adj Return", "Ann. Alpha",
+}
+
 
 def _build_consolidated_table(result, show_peers: bool = True) -> pd.DataFrame:
     """Merge absolute, relative, and beta-adjusted into one table.
@@ -131,15 +139,16 @@ def _render_performance_table(df: pd.DataFrame) -> None:
         escaped_desc = html_mod.escape(desc)
 
         cells = []
+        is_return = idx in _RETURN_METRICS
         for col in df.columns:
             val = df.loc[idx, col]
             if pd.isna(val):
                 cells.append(f'<td class="mt-val">{_PLACEHOLDER}</td>')
             elif idx in _PCT_METRICS:
-                cls = _color_class(val)
+                cls = _color_class(val) if is_return else ""
                 cells.append(f'<td class="mt-val {cls}">{_fmt_pct(val)}</td>')
             else:
-                cls = _color_class(val)
+                cls = _color_class(val) if is_return else ""
                 cells.append(f'<td class="mt-val {cls}">{_fmt_ratio(val)}</td>')
 
         if desc:
