@@ -202,8 +202,14 @@ Analysis Factor Exposure tab (sidebar tickers, not Market Monitor):
 - `load_factor_data()`: cached 24hr (`@st.cache_data(ttl=86400)`), returns `FactorData` (prices, returns, ticker/name maps)
 - `get_factor_staleness_days()`: returns calendar days since last data point; app shows warning when >2 days stale
 - `align_factor_returns()`: inner join on normalized DatetimeIndex, dropna for clean regression input
-- `clear_factor_cache()`: called by sidebar "Reload factor data" button. Only deletes Parquet when ECM is available (preserves data on Render).
+- `clear_factor_cache()` (sidebar "Reload factor data" button): runs a parallel full re-fetch + overwrites the Parquet when ECM is reachable; on Render (no ECM) it only clears Streamlit's in-memory cache. Always full-history — see "Prismatic incremental gotcha" below.
+- `_fetch_from_prismatic()`: fetches all 9 gadgets in parallel via `ThreadPoolExecutor(max_workers=9)`. ~10-11s steady-state vs ~26s sequential (~2.5×). Accepts an optional `start_date` for date-filtered renders, but **see the gotcha** before using it.
+- **Prismatic incremental gotcha**: passing `plotterStartDate` does NOT just trim rows — Prismatic recomputes the factor weights/leverage for the new start date, producing a recomputed series at a **different scale**. Empirically, cumulative deltas across the same date range come out ~0.44× the long-history version. This means date-filtered fetches are **not arithmetically compatible** with the long-history cache; you cannot rebase or merge them in any sane way. True incremental refresh is therefore not viable; the parallel full re-fetch is the right pattern.
 - **Render deployment**: Prismatic MCP is unavailable on Render. The Parquet cache file is committed to git (`.gitignore` exception) so Render always has factor data. On deploy, `is_available()` returns False → loader uses the committed Parquet cache. Daily automated refresh keeps the cache current (see `scripts/refresh_all.py`).
+
+### `data/ecm_client.py::render_gadget_csv()` — accepts optional `parameters`
+- Signature: `render_gadget_csv(gadget_id, parameters=None) -> str` (returns the server file path).
+- `parameters` is forwarded to the underlying `ecm_prismatic_render_gadgets` MCP tool. Discover valid keys via `ecm_prismatic_get_form_fields` — common ones for plotter-style gadgets are `plotterStartDate` / `plotterEndDate` (`M/D/YY` format).
 
 ### `data/fetcher.py` — yfinance with interval support
 - `validate_interval_date_range()`: enforces yfinance limits (1m→7d, 5m/15m→60d, 1h→730d)

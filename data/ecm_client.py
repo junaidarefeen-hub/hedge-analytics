@@ -196,18 +196,28 @@ def _mcp_tool_call(access_token: str, tool_name: str, arguments: dict) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def render_gadget_csv(gadget_id: str) -> str:
+def render_gadget_csv(
+    gadget_id: str,
+    parameters: dict | None = None,
+) -> str:
     """Render a Prismatic gadget as CSV and return the server file path.
+
+    Args:
+        gadget_id: Prismatic gadget ID.
+        parameters: Optional form-field overrides for the gadget. Discover
+            valid keys via ``ecm_prismatic_get_form_fields``. Common ones
+            for plotter-style gadgets: ``plotterStartDate`` and
+            ``plotterEndDate`` in ``M/D/YY`` format.
 
     Raises:
         ECMAuthError: Authentication failed.
         ECMFetchError: Render failed.
     """
     token = get_access_token()
-    raw = _mcp_tool_call(token, "ecm_prismatic_render_gadgets", {
-        "gadget_ids": [gadget_id],
-        "format": "csv",
-    })
+    payload = {"gadget_ids": [gadget_id], "format": "csv"}
+    if parameters:
+        payload["parameters"] = parameters
+    raw = _mcp_tool_call(token, "ecm_prismatic_render_gadgets", payload)
     result = json.loads(raw)
     renders = result.get("renders", [])
     if not renders:

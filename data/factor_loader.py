@@ -71,46 +71,83 @@ def _load_from_cache() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_from_prismatic() -> pd.DataFrame:
-    """Fetch raw cumulative return data from Prismatic gadgets via ECM MCP.
+def _fetch_one_gadget(
+    gadget_id: str,
+    factor_name: str,
+    start_date: str | None,
+) -> tuple[str, pd.Series | None]:
+    """Fetch a single gadget's CSV and parse it. Returns ``(name, series)``.
+
+    Returned ``series`` is the cumulative return for the chosen model prefix
+    (default ``GS``). When ``start_date`` is supplied, Prismatic resets the
+    cumulative to 0 at that date — callers must rebase before merging into
+    a longer history (see ``_rebase_incremental``).
+    """
+    from data.ecm_client import render_gadget_csv, read_share_file
+
+    parameters = {"plotterStartDate": start_date} if start_date else None
+    file_path = render_gadget_csv(gadget_id, parameters=parameters)
+    csv_text = read_share_file(file_path)
+    df = pd.read_csv(io.StringIO(csv_text))
+
+    target_col = None
+    for col in df.columns:
+        if col.startswith(f"{FACTOR_MODEL_PREFIX} ") and col.endswith(" (L)"):
+            target_col = col
+            break
+
+    if target_col is None:
+        logger.warning(
+            f"No '{FACTOR_MODEL_PREFIX}' column found for factor '{factor_name}' "
+            f"(gadget {gadget_id}). Available: {list(df.columns)}. Skipping."
+        )
+        return factor_name, None
+
+    dates = pd.to_datetime(df["Date"], errors="coerce")
+    values = pd.to_numeric(df[target_col], errors="coerce")
+    series = pd.Series(values.values, index=dates, name=factor_name)
+    series = series[series.index.notna()].dropna()
+    return factor_name, series
+
+
+def _fetch_from_prismatic(
+    start_date: str | None = None,
+    max_workers: int = 9,
+) -> pd.DataFrame:
+    """Fetch raw cumulative return data from all factor gadgets in parallel.
 
     Each gadget returns a CSV with columns: Date, GS {Factor} (L), MS {Factor} (L).
-    Values are additive cumulative return indices starting at 0.
+    Values are additive cumulative return indices that start at 0 on the
+    first returned date.
+
+    Args:
+        start_date: Optional ``M/D/YY`` string. If provided, gadgets only
+            return rows from this date forward (cumulative resets to 0 at
+            that date — caller must rebase before merging).
+        max_workers: Thread pool size for parallel gadget fetches. The
+            sequential per-gadget cost is dominated by network round-trip
+            to Prismatic; parallelism cuts wall time roughly N-fold.
 
     Returns:
-        DataFrame of raw cumulative returns (not price indices), indexed by date.
+        DataFrame of raw cumulative returns (not price indices), indexed by
+        date with one column per factor name.
     """
-    from data.ecm_client import ECMFetchError, render_gadget_csv, read_share_file
+    from concurrent.futures import ThreadPoolExecutor
 
+    from data.ecm_client import ECMFetchError
+
+    items = list(FACTOR_GADGET_IDS.items())
     all_series: dict[str, pd.Series] = {}
 
-    for gadget_id, factor_name in FACTOR_GADGET_IDS.items():
-        file_path = render_gadget_csv(gadget_id)
-        csv_text = read_share_file(file_path)
-
-        df = pd.read_csv(io.StringIO(csv_text))
-
-        # Find the column matching our model prefix (GS or MS)
-        target_col = None
-        for col in df.columns:
-            if col.startswith(f"{FACTOR_MODEL_PREFIX} ") and col.endswith(" (L)"):
-                target_col = col
-                break
-
-        if target_col is None:
-            logger.warning(
-                f"No '{FACTOR_MODEL_PREFIX}' column found for factor '{factor_name}' "
-                f"(gadget {gadget_id}). Available: {list(df.columns)}. Skipping."
-            )
-            continue
-
-        dates = pd.to_datetime(df["Date"], errors="coerce")
-        values = pd.to_numeric(df[target_col], errors="coerce")
-        series = pd.Series(values.values, index=dates, name=factor_name)
-        series = series[series.index.notna()]
-        series = series.dropna()
-
-        all_series[factor_name] = series
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [
+            ex.submit(_fetch_one_gadget, gid, name, start_date)
+            for gid, name in items
+        ]
+        for fut in futures:
+            name, series = fut.result()
+            if series is not None:
+                all_series[name] = series
 
     if not all_series:
         raise ECMFetchError("No factor data retrieved from any Prismatic gadget.")
@@ -174,17 +211,27 @@ def load_factor_data() -> FactorData:
 
 
 def clear_factor_cache():
-    """Clear Streamlit cache and optionally the local Parquet cache.
+    """Force a full re-fetch from Prismatic and clear Streamlit's in-memory cache.
 
-    Only deletes the Parquet file when ECM is available (can re-fetch).
-    On Render (no ECM), keeps the Parquet so data remains accessible.
+    Behavior:
+      * Local dev (ECM reachable): re-fetches all 9 GS factor gadgets from
+        Prismatic in parallel (``ThreadPoolExecutor``) and overwrites the
+        Parquet cache. The fetch is full-history because Prismatic's
+        ``plotterStartDate`` filter changes the underlying factor scale —
+        partial fetches are not arithmetically compatible with the long
+        history, so a parallel full re-fetch is the correct trade-off.
+      * Render (no ECM): clears Streamlit's in-memory cache only; the
+        committed Parquet remains the source of truth.
     """
     load_factor_data.clear()
     from data.ecm_client import is_available
 
-    if is_available() and _CACHE_PARQUET.exists():
-        _CACHE_PARQUET.unlink()
-        logger.info("Local factor Parquet cache deleted.")
+    if is_available():
+        try:
+            cumulative = _fetch_from_prismatic()
+            _save_to_cache(cumulative)
+        except Exception as e:  # pragma: no cover — defensive
+            logger.warning(f"Factor cache refresh failed: {e}")
 
 
 def get_factor_staleness_days(factor_data: FactorData) -> int | None:
