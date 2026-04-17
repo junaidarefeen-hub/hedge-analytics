@@ -18,9 +18,12 @@ from ui.sector_reversion_tab import render_sector_reversion_tab
 from ui.sidebar import render_sidebar
 from ui.style import inject_css
 from ui.trade_ideas_tab import render_trade_ideas_tab
+from ui.universe_screen_tab import render_universe_screen_tab
+from ui.watchlist_tab import render_watchlist_tab
 from ui.backtest import render_backtest_tab
 from ui.compare import render_compare_tab
 from ui.custom_hedge import render_custom_hedge_tab
+from ui.data_tab_exposures import render_per_ticker_exposures
 from ui.factor_analytics import render_factor_analytics_tab
 from ui.montecarlo import render_montecarlo_tab
 from ui.optimizer import render_optimizer_tab
@@ -99,18 +102,20 @@ if factor_data is not None:
 
 # Tabs
 # Tab groups:
-#   Analysis (1-5):       Data · Price Performance · Correlation · Beta · Pairs/Spread
-#   Hedging  (6-11):      Hedge Optimizer · Strategy Compare · Backtest · Monte Carlo · Stress Test · Drawdown
-#   Deep     (12-14):     Custom Hedge · Factor Analytics · Regime
-#   Market Monitor (15-18): Market Snapshot · Sector & Reversion · Factor Monitor · Trade Ideas
-(tab_data, tab_perf, tab_corr, tab_beta, tab_pairs,
+#   Analysis (1-6):       Data · Price Performance · Correlation · Beta · Pairs/Spread · Factor Exposure
+#   Hedging  (7-12):      Hedge Optimizer · Strategy Compare · Backtest · Monte Carlo · Stress Test · Drawdown
+#   Deep     (13-15):     Custom Hedge · Factor Analytics · Regime
+#   Market Monitor (16-21): Market Snapshot · Sector & Reversion · Factor Monitor · Trade Ideas · Watchlist · Universe Screener
+(tab_data, tab_perf, tab_corr, tab_beta, tab_pairs, tab_exposure,
  tab_optim, tab_compare, tab_backtest, tab_mc, tab_stress, tab_dd,
  tab_custom, tab_factor, tab_regime,
- tab_mm_snapshot, tab_mm_sector, tab_mm_factors, tab_mm_trades) = st.tabs([
-    "Data", "Price Performance", "Correlation", "Beta", "Pairs/Spread",
+ tab_mm_snapshot, tab_mm_sector, tab_mm_factors, tab_mm_trades,
+ tab_mm_watchlist, tab_mm_screener) = st.tabs([
+    "Data", "Price Performance", "Correlation", "Beta", "Pairs/Spread", "Factor Exposure",
     "Hedge Optimizer", "Strategy Compare", "Backtest", "Monte Carlo", "Stress Test", "Drawdown",
     "Custom Hedge", "Factor Analytics", "Regime",
     "Market Snapshot", "Sector & Reversion", "Factor Monitor", "Trade Ideas",
+    "Watchlist & Changes", "Universe Screener",
 ])
 
 # --- Data Tab ---
@@ -244,6 +249,15 @@ with tab_beta:
 with tab_pairs:
     render_pairs_tab(prices, returns, params)
 
+# --- Factor Exposure (per-ticker drill-down) ---
+with tab_exposure:
+    render_per_ticker_exposures(
+        valid_stocks=valid_stocks,
+        returns=returns,
+        factor_data=factor_data,
+        benchmarks=params.get("benchmarks", []),
+    )
+
 # --- Hedge Optimizer ---
 with tab_optim:
     render_optimizer_tab(returns, params)
@@ -357,6 +371,18 @@ def _run_mm_refresh():
     save_prices(merged)
     _load_mm_prices.clear()
 
+    # Append a signal snapshot for cross-day delta tracking (Phase 2).
+    # Failure here must not block the refresh — log and continue.
+    try:
+        from analytics.signal_history import append_snapshot, build_snapshot
+
+        sector_tickers = [c for c in merged.columns if c != "SPX"]
+        factor_returns = factor_data.returns if factor_data is not None else None
+        snap = build_snapshot(merged[sector_tickers], factor_returns=factor_returns)
+        append_snapshot(snap)
+    except Exception as snap_err:  # pragma: no cover — defensive
+        st.warning(f"Snapshot append failed (deltas may be stale): {snap_err}")
+
     n_valid = closes.iloc[-1].dropna().count()
     latest_date = closes.index[-1].date()
     st.success(f"Live prices updated: {n_valid} tickers as of {latest_date}")
@@ -387,3 +413,11 @@ with tab_mm_factors:
 # --- Trade Ideas ---
 with tab_mm_trades:
     render_trade_ideas_tab(mm_prices, factor_data, mm_data_available)
+
+# --- Watchlist & Changes ---
+with tab_mm_watchlist:
+    render_watchlist_tab(mm_prices, mm_data_available)
+
+# --- Universe Screener ---
+with tab_mm_screener:
+    render_universe_screen_tab(mm_prices, mm_data_available)

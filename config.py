@@ -146,6 +146,13 @@ FA_DEFAULT_LONG_NOTIONAL = 10_000_000.0
 FA_DEFAULT_SHORT_NOTIONAL = 10_000_000.0
 FA_DEFAULT_P_THRESHOLD = 0.05
 FA_SIGNIFICANCE_LEVELS = {0.01: "***", 0.05: "**", 0.10: "*"}
+
+# Default GS factor selection for the per-ticker exposure tab. Excludes
+# Equal Weight (overlaps with the market regressor) and Beta (double-counts
+# market exposure when paired with the market regressor).
+FA_DEFAULT_PER_TICKER_FACTORS = [
+    "Momentum", "Size", "Quality", "Volatility", "Value", "Growth", "Leverage",
+]
 # ---------------------------------------------------------------------------
 # Market Monitor
 # ---------------------------------------------------------------------------

@@ -46,6 +46,11 @@ def get_name_map() -> dict[str, str]:
     return {ticker: info["name"] for ticker, info in load_constituents().items()}
 
 
+def get_industry_map() -> dict[str, str]:
+    """Return ticker -> GICS industry mapping (more granular than sector)."""
+    return {ticker: info["industry"] for ticker, info in load_constituents().items()}
+
+
 def get_tickers_by_sector(sector: str) -> list[str]:
     """Return sorted list of tickers in a given GICS sector."""
     return sorted(

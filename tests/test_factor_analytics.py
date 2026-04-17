@@ -8,8 +8,10 @@ from analytics.factor_analytics import (
     FactorAnalyticsResult,
     LegDecomposition,
     OLSResult,
+    PerTickerExposures,
     _build_regression_table,
     _ols_regression,
+    compute_per_ticker_exposures,
     run_factor_analytics,
 )
 
@@ -322,3 +324,122 @@ class TestDailySeriesStored:
         assert len(result.long.daily_factor) == T
         assert len(result.long.daily_idio) == T
         assert len(result.long.daily_total) == T
+
+
+class TestPerTickerExposures:
+    """compute_per_ticker_exposures: one OLS per ticker, shared X."""
+
+    def _build_universe(self, rng, dates, *, betas: dict[str, list[float]]):
+        """Construct a synthetic universe where each ticker has known
+        betas to [Market, F1, F2] plus idiosyncratic noise."""
+        T = len(dates)
+        market = rng.normal(0.0003, 0.01, T)
+        f1 = rng.normal(0.0001, 0.012, T)
+        f2 = rng.normal(0.0002, 0.011, T)
+        factors = pd.DataFrame({"F1": f1, "F2": f2}, index=dates)
+        market_s = pd.Series(market, index=dates, name="MKT")
+
+        stocks = {}
+        for ticker, [bm, b1, b2] in betas.items():
+            idio = rng.normal(0, 0.005, T)
+            stocks[ticker] = bm * market + b1 * f1 + b2 * f2 + idio
+        stock_df = pd.DataFrame(stocks, index=dates)
+        return stock_df, market_s, factors
+
+    def test_returns_per_ticker_exposures_dataclass(self, rng, dates):
+        stocks, market, factors = self._build_universe(
+            rng, dates, betas={"AAA": [1.0, 0.5, 0.0], "BBB": [0.5, 0.0, 0.8]},
+        )
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1", "F2"],
+        )
+        assert isinstance(result, PerTickerExposures)
+        assert result.market_index == "MKT"
+        assert result.factor_names == ["MKT", "F1", "F2"]
+
+    def test_shapes(self, rng, dates):
+        stocks, market, factors = self._build_universe(
+            rng, dates, betas={"AAA": [1.0, 0.5, 0.0], "BBB": [0.5, 0.0, 0.8], "CCC": [0.7, 0.3, 0.4]},
+        )
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1", "F2"],
+        )
+        assert result.betas.shape == (3, 3)  # 3 tickers x [MKT, F1, F2]
+        assert result.pvalues.shape == (3, 3)
+        assert result.significance.shape == (3, 3)
+        assert list(result.betas.columns) == ["MKT", "F1", "F2"]
+        assert set(result.betas.index) == {"AAA", "BBB", "CCC"}
+
+    def test_recovers_known_betas(self, rng, dates):
+        true_betas = {"AAA": [1.0, 0.5, 0.0], "BBB": [0.5, 0.0, 0.8]}
+        stocks, market, factors = self._build_universe(rng, dates, betas=true_betas)
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1", "F2"],
+        )
+        # Betas should be close to the true values (small idio noise).
+        for ticker, [bm, b1, b2] in true_betas.items():
+            assert result.betas.loc[ticker, "MKT"] == pytest.approx(bm, abs=0.05)
+            assert result.betas.loc[ticker, "F1"] == pytest.approx(b1, abs=0.05)
+            assert result.betas.loc[ticker, "F2"] == pytest.approx(b2, abs=0.05)
+
+    def test_significance_stars_for_strong_signal(self, rng, dates):
+        stocks, market, factors = self._build_universe(
+            rng, dates, betas={"AAA": [1.0, 0.5, 0.0]},
+        )
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1", "F2"],
+        )
+        # MKT and F1 should be highly significant; F2 should not be.
+        assert result.significance.loc["AAA", "MKT"] == "***"
+        assert result.significance.loc["AAA", "F1"] == "***"
+        assert result.significance.loc["AAA", "F2"] == ""
+
+    def test_r_squared_in_zero_one(self, rng, dates):
+        stocks, market, factors = self._build_universe(
+            rng, dates, betas={"AAA": [1.0, 0.5, 0.0], "BBB": [0.5, 0.0, 0.8]},
+        )
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1", "F2"],
+        )
+        assert (result.r_squared >= 0).all()
+        assert (result.r_squared <= 1).all()
+
+    def test_per_ticker_legs_have_decomposition(self, rng, dates):
+        stocks, market, factors = self._build_universe(
+            rng, dates, betas={"AAA": [1.0, 0.5, 0.0]},
+        )
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1", "F2"],
+        )
+        leg = result.per_ticker_legs["AAA"]
+        # factor + idio = total (additive decomposition invariant from _build_leg)
+        sum_decomp = leg.daily_factor + leg.daily_idio
+        np.testing.assert_allclose(sum_decomp.values, leg.daily_total.values, atol=1e-12)
+
+    def test_short_history_ticker_skipped(self, rng, dates):
+        stocks, market, factors = self._build_universe(
+            rng, dates, betas={"GOOD": [1.0, 0.5, 0.0]},
+        )
+        # Inject a ticker with only 5 valid observations (below k+5=8).
+        short_series = pd.Series(np.nan, index=dates)
+        short_series.iloc[-5:] = rng.normal(0, 0.01, 5)
+        stocks["IPO"] = short_series
+
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1", "F2"],
+        )
+        assert "GOOD" in result.tickers
+        assert "IPO" not in result.tickers
+
+    def test_empty_overlap_returns_empty(self, rng):
+        # Date ranges that don't intersect.
+        d1 = pd.bdate_range("2020-01-02", periods=100, freq="B")
+        d2 = pd.bdate_range("2024-01-02", periods=100, freq="B")
+        stocks = pd.DataFrame({"AAA": rng.normal(0, 0.01, 100)}, index=d1)
+        market = pd.Series(rng.normal(0, 0.01, 100), index=d2, name="MKT")
+        factors = pd.DataFrame({"F1": rng.normal(0, 0.01, 100)}, index=d2)
+        result = compute_per_ticker_exposures(
+            stocks, market, factors, market_index="MKT", factor_names=["F1"],
+        )
+        assert result.tickers == []
+        assert result.betas.empty

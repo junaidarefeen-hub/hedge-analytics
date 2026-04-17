@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Streamlit app for portfolio hedge analysis and S&P 500 market monitoring: correlations, betas, hedge optimization, backtesting, drawdowns, regime detection, and market-wide sector/factor/reversion screening.
+Streamlit app for portfolio hedge analysis and S&P 500 market monitoring: correlations, betas, per-ticker factor exposure, hedge optimization, backtesting, drawdowns, regime detection, market-wide sector/factor/reversion screening, persistent signal-change tracking, and universe-wide drawdown/regime/pair screens.
 
 ## Run
 
@@ -20,7 +20,7 @@ Dependencies: `pip install -r requirements.txt` (streamlit, yfinance, plotly, sc
 
 **4-layer structure**: `data/` (fetching) → `analytics/` (computation) → `ui/` (display) → `app.py` (wiring)
 
-- `app.py` — Entry point, 18-tab layout (14 hedge tabs + 4 market monitor tabs). Passes `returns`, `params`, and `factor_data` to hedge tabs; market monitor tabs load independently from Parquet cache.
+- `app.py` — Entry point, 21-tab layout. Tab groups: Analysis (1-6: Data · Price Performance · Correlation · Beta · Pairs/Spread · Factor Exposure), Hedging (7-12), Deep Dives (13-15), Market Monitor (16-21: Market Snapshot · Sector & Reversion · Factor Monitor · Trade Ideas · Watchlist & Changes · Universe Screener). Passes `returns`, `params`, and `factor_data` to Analysis/Hedging/Deep tabs; Market Monitor tabs load independently from Parquet cache. CSS dividers in `ui/style.py` mark group boundaries at tabs 7/13/16.
 - `config.py` — All defaults and constants (tickers, dates, strategies, bounds, intervals, regime/rolling params)
 - `ui/sidebar.py` — Returns `params` dict consumed by all tabs. Includes interval selector, cache clear button, and peer group load/save/delete.
 - `ui/style.py` — `PLOTLY_LAYOUT` base config applied to every chart + CSS injection
@@ -43,12 +43,23 @@ Sidebar → validate_and_fetch(interval=) [cached 1hr] → compute_returns()
 
 Market Monitor (independent data pipeline):
   Sidebar "Refresh Market Data" → yfinance live prices → merge into Parquet cache
+  Refresh also calls build_snapshot() + append_snapshot() → signal_history.parquet
   Scheduled refresh (scripts/refresh_all.py) → RVX EQD(PRICE) → Parquet cache → git push
   Parquet cache → load_cached_prices() [cached 5min in Streamlit]
     ├─ Market Snapshot tab → compute_daily_snapshot() → breadth, sector heatmap, top movers
+    │                       + current_dispersion() + rank_rotation_candidates() (Phase 1 augment)
     ├─ Sector & Reversion tab → compute_reversion_signals() → RSI, z-scores, Bollinger, composite
     ├─ Factor Monitor tab → compute_factor_monitor() → factor trends + stock betas
-    └─ Trade Ideas tab → screen_*_candidates() → ranked trade ideas
+    ├─ Trade Ideas tab → screen_*_candidates() → ranked trade ideas + "+ Watchlist" capture
+    ├─ Watchlist & Changes tab → load_history() + compute_deltas() + load_watchlist()
+    │                            (signal transitions + persistent ideas + CSV/Bloomberg export)
+    └─ Universe Screener tab → 3 modes: rank_underwater_basing, regime_conditional_stats,
+                               scan_industry_pairs (gated behind "Run scan" + 1hr cache)
+
+Analysis Factor Exposure tab (sidebar tickers, not Market Monitor):
+  returns + factor_data → compute_per_ticker_exposures() → PerTickerExposures
+    └─ heatmap (tickers x [market | selected GS factors]) + per-ticker drill-down
+       (regression table + cumulative factor/idio decomposition)
 ```
 
 **Session state bridge**: Optimizer stores `HedgeResult` + params hash in `st.session_state`. Backtest, Monte Carlo, Stress, Drawdown (hedged mode), and Regime (hedge effectiveness) read it. Staleness detection via `_params_hash()`.
@@ -127,6 +138,54 @@ Market Monitor (independent data pipeline):
 - Long basket weights allow negative values (-100% to +100%) to represent short positions within the basket
 - Beta heatmap rows match active legs (1 row long-only, 3 rows with short); significance stars from OLS p-values
 - Multicollinearity warning via condition number check on design matrix
+- **`compute_per_ticker_exposures()` + `PerTickerExposures`**: per-ticker OLS variant powering the standalone Factor Exposure tab. Reuses `_ols_regression` and `_build_leg`. Per-ticker re-aligns design matrix to each ticker's own non-null window (so a recent IPO doesn't truncate the universe). Skips tickers with fewer than k+5 obs. Returns shared-shape `betas`, `pvalues`, `significance` frames plus `r_squared`, `alpha_ann`, `n_obs` series and a `per_ticker_legs` dict of full `LegDecomposition` objects for drill-down. Default factor selection lives in `config.FA_DEFAULT_PER_TICKER_FACTORS` (excludes Equal Weight + Beta).
+
+### `ui/data_tab_exposures.py` — Factor Exposure tab UI
+- Standalone tab in the Analysis group (6th tab). Multiselect for GS factor regressors + selectbox for market regressor (sourced from sidebar benchmarks).
+- Heatmap (rows = sidebar stocks, cols = market + selected factors) with significance stars baked into cells, mirrors the diverging colorscale + annotation pattern from `ui/factor_analytics.py::_beta_heatmap_chart`.
+- Per-ticker expander → full OLS regression table + cumulative additive decomposition mini-chart (factor + idio = total).
+- Right-column "Fit summary" table: R², annualized α, n_obs.
+
+### `analytics/dispersion.py` — Cross-sectional + sector dispersion
+- `compute_dispersion_history()` returns daily `cs_std` (per-name dispersion) + `sector_std` (equal-weight sector-mean dispersion) over a lookback window. Uses `groupby(daily_returns.columns.map(sector_map))` on the transposed returns frame for sector aggregation.
+- `current_dispersion()` returns a `DispersionSnapshot` with current values, percentile rank in the lookback (`(series <= latest).mean() * 100`), and a `top_decile_flag` for UI emphasis.
+- Used by the Market Snapshot tab "Dispersion Regime" section.
+
+### `analytics/intraday_rotation.py` — Lagger-in-Leader / Leader-in-Laggard
+- `rank_rotation_candidates()` consumes today's per-ticker daily returns + per-sector daily returns + reversion composite. Sectors are ranked by pctile; "leading" sectors are above `leader_pctile`, "lagging" below `laggard_pctile`. Single names down inside leading sectors → "Lagger in Leader"; up inside lagging sectors → "Leader in Laggard".
+- `derive_inputs_from_snapshot()` is a UI-side helper that pulls `daily_returns` + `sector_returns_today` from a wide prices frame so the tab doesn't have to duplicate the `pct_change(fill_method=None).iloc[-1]` + `groupby(sector_map).mean()` boilerplate.
+- Lagger sort: composite ascending (most-oversold first). Leader sort: `relative_to_sector` descending (biggest outperformer first).
+
+### `analytics/signal_history.py` — Persistent snapshots + delta classifier + watchlist
+- **On-disk format** (`data/cache/market_monitor/signal_history.parquet`, long format): columns `date, key, metric, value, label`. Numeric metrics (composite, rsi, ma_distance_50d, rolling_max/min_252d, last_price) populate `value` with `label=""`; categorical `factor_trend` rows populate `label` with `value=NaN`. One Parquet, one round-trip per write.
+- `build_snapshot(prices, factor_returns=None) -> SignalSnapshot` — pure compute. Reuses `compute_reversion_signals` + `classify_factor_trends`.
+- `append_snapshot()` — idempotent: drops all rows for the snapshot date before appending, so a refresh that fires twice in one day produces the same on-disk state. Called from `app.py::_run_mm_refresh` after every market data refresh.
+- `compute_deltas(history, current_date, prior_date)` — categorizer producing `SignalDelta` rows. Categories: Entered/Exited Oversold (composite crosses 25), RSI Flip <30 / >70, Broke 50d MA / Reclaimed 50d MA (sign flip on `ma_distance_50d`), New 52w High/Low (today's `last_price` vs. *prior-day* `rolling_max_252d` × 0.999 — comparing to prior day avoids a tautology), Factor Trend Flip (label change on `factor_trend`).
+- Watchlist CRUD (`load_watchlist`, `save_watchlist`, `add_ticker`, `remove_ticker`) backed by `watchlist.json`. `add_ticker` is idempotent: re-adding a ticker updates note/tags in place rather than duplicating.
+- All persistence functions take an optional `store_dir` so tests can write to `tmp_path` without polluting the real cache.
+
+### `ui/watchlist_tab.py` — "Watchlist & Changes" tab
+- Three sections: (1) "What Changed Since…" with date picker + category multiselect → grouped pills; each pill has a "+ watchlist" button. (2) Watchlist table with live composite/RSI overlay merged from today's reversion signals. (3) Export — CSV download + Bloomberg-format ticker list (`AAPL US Equity ...`).
+- Trade Ideas tab (`ui/trade_ideas_tab.py`) gained a `_watchlist_capture()` widget rendered after each screener mode's results table.
+
+### `analytics/universe_drawdown.py` — Universe-wide deep-drawdown screen
+- `rank_underwater_basing(prices, signals_df, min_dd, min_days_underwater, composite_lookback_days)` calls `compute_drawdowns` per ticker, picks the latest *unrecovered* drawdown period (filters `p.end is None`, takes the one closest to today), and computes a **`composite_60d_improvement`** delta — the novel signal: how much *less* oversold the stock has gotten over 60 days even while still in the drawdown. Sorted by improvement descending so most-improving basers surface first.
+- ~16s for 504 tickers; gated behind `@st.cache_data(ttl=3600)` keyed on `prices.index.max()`.
+
+### `analytics/universe_regime.py` — Per-ticker regime-conditional stats
+- `regime_conditional_stats(prices, spx_returns, regime_series=None)` detects regimes once on SPX (defaults to `analytics.regime.detect_regimes(method='quantile', n_regimes=3)`), then per-ticker computes `avg_return_ann`, `vol_ann`, `sharpe`, `vs_spx_alpha`, `days` for each regime label. Returns long-format DataFrame.
+- `latest_regime_label()` is a standalone helper for headers — runs regime detection on SPX and returns today's label string.
+
+### `analytics/universe_pairs.py` — Within-industry pair scanner
+- `scan_industry_pairs(prices, returns, industry_map, top_k_per_industry=3)` — two-stage cost bounding: (1) cheap `corr().abs()` per industry to pick top-K most-correlated unique pairs (caps total candidates at ~127 industries × K), (2) expensive `compute_pairs_analysis` (ADF + half-life + z-score) only on those survivors. Returns `PairCandidateRow` rows sorted by `|current_zscore|` descending.
+- Industry mapping comes from `data.market_monitor.constituents.get_industry_map()` (added alongside the existing `get_sector_map`/`get_name_map`).
+
+### `ui/universe_screen_tab.py` — "Universe Screener" tab
+- Three modes via `st.radio`:
+  - **Deep Drawdown Basing** — scatter (days underwater × current dd, colored by composite_60d_improvement) + ranked table + "+ Watchlist" capture.
+  - **Regime-Conditional** — picker for vol regime (defaults to today's), top-50 by Sharpe in chosen regime, "+ Watchlist" capture.
+  - **Industry Pair Spreads** — gated behind a "Run scan" button (~30-60s); cached result stored in `st.session_state["us_pairs_result"]`. Filterable by minimum |z-score|.
+- Caching: each mode wraps its analytics call in `@st.cache_data(ttl=3600)` keyed on a `_price_hash(prices)` string (price index max + column count) so the cache invalidates on every market data refresh.
 
 ### `data/ecm_client.py` — ECM MCP client for RVX / Prismatic
 - OAuth2 via Keycloak (60s JWT TTL, auto-refresh). Credentials stored in `~/.claude/.credentials.json` → `mcpOAuth["ecm|72c3fb7b2b25e5da"]`.
@@ -163,7 +222,7 @@ Market Monitor (independent data pipeline):
 - **Independent from hedge tabs**: Market monitor tabs do not use sidebar ticker/date inputs. They load exclusively from the Parquet cache.
 - **Cache size**: ~7 MB for 504 tickers × 2515 days (10yr). Parquet is efficient for columnar float data.
 - **Render deployment**: Both `prices.parquet` and `metadata.json` are committed to git (`.gitignore` exceptions). RVX is unavailable on Render; sidebar yfinance refresh provides intraday updates. Historical data stays current via daily scheduled refresh + commit/push.
-- **`.gitignore` cache exceptions**: `data/cache/*` is ignored except: `!data/cache/factor_prices.parquet`, `!data/cache/market_monitor/`, `!data/cache/market_monitor/prices.parquet`, `!data/cache/market_monitor/metadata.json`.
+- **`.gitignore` cache exceptions**: `data/cache/*` is ignored except: `!data/cache/factor_prices.parquet`, `!data/cache/market_monitor/`, `!data/cache/market_monitor/prices.parquet`, `!data/cache/market_monitor/metadata.json`, `!data/cache/market_monitor/signal_history.parquet`, `!data/cache/market_monitor/watchlist.json`.
 
 ### `scripts/refresh_all.py` — Unified daily cache refresh
 - Refreshes both factor data (Prismatic) and market monitor data (RVX EOD) in one invocation

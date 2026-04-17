@@ -187,10 +187,10 @@ def inject_css():
         }
 
         /* Tab group dividers — visual separators between Analysis | Hedging | Deep Dives | Market Monitor */
-        /* Group 2 starts at tab 6, Group 3 at 12, Group 4 at 15 (1-indexed) */
-        .stTabs [data-baseweb="tab-list"] > button:nth-child(6),
-        .stTabs [data-baseweb="tab-list"] > button:nth-child(12),
-        .stTabs [data-baseweb="tab-list"] > button:nth-child(15) {
+        /* Group 2 starts at tab 7, Group 3 at 13, Group 4 at 16 (1-indexed) */
+        .stTabs [data-baseweb="tab-list"] > button:nth-child(7),
+        .stTabs [data-baseweb="tab-list"] > button:nth-child(13),
+        .stTabs [data-baseweb="tab-list"] > button:nth-child(16) {
             margin-left: 0.5rem;
             border-left: 2px solid #cbd5e1;
             padding-left: 1.4rem;

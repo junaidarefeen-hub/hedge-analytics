@@ -13,4 +13,7 @@ data/cache/*
 !data/cache/market_monitor/
 !data/cache/market_monitor/prices.parquet
 !data/cache/market_monitor/metadata.json
+!data/cache/market_monitor/signal_history.parquet
+!data/cache/market_monitor/watchlist.json
 *.log
+.claude/

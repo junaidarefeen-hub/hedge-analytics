@@ -8,6 +8,7 @@ import streamlit as st
 
 from analytics.factor_monitor import compute_factor_monitor
 from analytics.reversion import compute_reversion_signals
+from analytics.signal_history import add_ticker
 from analytics.trade_screener import (
     screen_factor_candidates,
     screen_factor_reversion,
@@ -15,6 +16,43 @@ from analytics.trade_screener import (
 )
 from data.market_monitor.constituents import GICS_SECTORS, get_name_map, get_sector_map
 from ui.style import PLOTLY_LAYOUT
+
+
+def _watchlist_capture(candidates_df, *, default_note: str, key_prefix: str) -> None:
+    """Render a compact 'add to watchlist' control above a screener table.
+
+    The trade screener tables are non-interactive ``st.dataframe`` widgets, so
+    inline per-row buttons are not possible without rebuilding them. This is
+    the lightweight alternative: a selectbox of the visible candidates plus a
+    single capture button.
+    """
+    if candidates_df.empty:
+        return
+    tickers = (
+        candidates_df["Ticker"].tolist()
+        if "Ticker" in candidates_df.columns
+        else candidates_df.index.tolist()
+    )
+    if not tickers:
+        return
+    cols = st.columns([1, 2, 1])
+    with cols[0]:
+        choice = st.selectbox(
+            "Capture idea",
+            tickers,
+            key=f"{key_prefix}_capture_pick",
+        )
+    with cols[1]:
+        note = st.text_input(
+            "Note (optional)",
+            value=default_note,
+            key=f"{key_prefix}_capture_note",
+        )
+    with cols[2]:
+        st.write("")  # vertical spacer for button alignment
+        if st.button("+ Watchlist", key=f"{key_prefix}_capture_btn"):
+            add_ticker(choice, note=note or default_note)
+            st.success(f"Added {choice} to watchlist.")
 
 
 def _signal_strength_bar(candidates, title: str) -> go.Figure:
@@ -137,6 +175,14 @@ def render_trade_ideas_tab(prices, factor_data, mm_data_available: bool) -> None
                 )
                 st.dataframe(styled, use_container_width=True, height=550)
 
+            chart_df_for_capture = candidates.copy()
+            chart_df_for_capture["Ticker"] = chart_df_for_capture.index
+            _watchlist_capture(
+                chart_df_for_capture,
+                default_note="Oversold Reversion",
+                key_prefix="ti_rev",
+            )
+
     elif mode == "Factor Plays":
         if stock_betas is None or factor_trends is None:
             st.warning("Factor data required for factor plays screening. Ensure factor data is loaded.")
@@ -160,6 +206,12 @@ def render_trade_ideas_tab(prices, factor_data, mm_data_available: bool) -> None
                         "Factor Sharpe": "{:.2f}",
                     }, na_rep="—")
                     st.dataframe(styled, use_container_width=True, hide_index=True, height=400)
+
+            _watchlist_capture(
+                candidates,
+                default_note="Factor Play",
+                key_prefix="ti_factor",
+            )
 
     else:  # Factor + Reversion Combo
         if stock_betas is None or factor_trends is None:
@@ -196,3 +248,9 @@ def render_trade_ideas_tab(prices, factor_data, mm_data_available: bool) -> None
                     na_rep="—",
                 )
                 st.dataframe(styled, use_container_width=True, hide_index=True, height=550)
+
+            _watchlist_capture(
+                candidates,
+                default_note="Factor + Reversion Combo",
+                key_prefix="ti_combo",
+            )

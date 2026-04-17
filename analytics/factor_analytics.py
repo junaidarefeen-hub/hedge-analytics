@@ -68,6 +68,29 @@ class FactorAnalyticsResult:
     leg_names: list[str] = field(default_factory=list)
 
 
+@dataclass
+class PerTickerExposures:
+    """Per-ticker factor exposure summary for the Data-tab drill-down.
+
+    The heatmap and pvalues frames share rows (tickers) and columns
+    (Market + factor names) so they can be displayed side-by-side or
+    overlaid for significance shading. ``per_ticker_legs`` keeps the
+    full ``LegDecomposition`` for each ticker so the UI can build a
+    cumulative factor/idio chart on demand.
+    """
+
+    tickers: list[str]
+    factor_names: list[str]  # ordered: [market_index] + GS factors
+    betas: pd.DataFrame  # tickers x factor_names
+    pvalues: pd.DataFrame  # tickers x factor_names
+    significance: pd.DataFrame  # tickers x factor_names — "***"/"**"/"*"/""
+    r_squared: pd.Series  # tickers
+    alpha_ann: pd.Series  # tickers — annualised intercept (alpha)
+    n_obs: pd.Series  # tickers
+    per_ticker_legs: dict[str, LegDecomposition]
+    market_index: str
+
+
 # ---------------------------------------------------------------------------
 # OLS implementation
 # ---------------------------------------------------------------------------
@@ -307,4 +330,128 @@ def run_factor_analytics(
         dates=dates,
         p_threshold=p_threshold,
         leg_names=leg_names,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-ticker exposures (Data-tab drill-down)
+# ---------------------------------------------------------------------------
+
+def compute_per_ticker_exposures(
+    stock_returns: pd.DataFrame,
+    market_returns: pd.Series,
+    factor_returns: pd.DataFrame,
+    market_index: str,
+    factor_names: list[str],
+) -> PerTickerExposures:
+    """Run a separate OLS for each ticker against [market | factors].
+
+    Parameters
+    ----------
+    stock_returns : pd.DataFrame
+        Daily returns indexed by date with one column per ticker.
+    market_returns : pd.Series
+        Daily market index returns aligned to ``stock_returns``.
+    factor_returns : pd.DataFrame
+        Daily factor returns aligned to ``stock_returns``.
+    market_index : str
+        Name of the market regressor (e.g. ``"SPY"``).
+    factor_names : list[str]
+        Names of the GS factor columns in ``factor_returns``.
+
+    Returns
+    -------
+    PerTickerExposures
+        Wide-format betas / p-values / significance frames plus the
+        full ``LegDecomposition`` per ticker for the cumulative chart.
+    """
+    all_regressor_names = [market_index] + factor_names
+
+    # Align everything to a single common date index. Inner join keeps it
+    # simple and matches what `align_factor_returns` does for the existing
+    # Factor Analytics tab.
+    common_idx = stock_returns.index
+    common_idx = common_idx.intersection(market_returns.index)
+    common_idx = common_idx.intersection(factor_returns.index)
+    if common_idx.empty:
+        return PerTickerExposures(
+            tickers=[],
+            factor_names=all_regressor_names,
+            betas=pd.DataFrame(columns=all_regressor_names),
+            pvalues=pd.DataFrame(columns=all_regressor_names),
+            significance=pd.DataFrame(columns=all_regressor_names),
+            r_squared=pd.Series(dtype=float),
+            alpha_ann=pd.Series(dtype=float),
+            n_obs=pd.Series(dtype=int),
+            per_ticker_legs={},
+            market_index=market_index,
+        )
+
+    stock_aligned = stock_returns.loc[common_idx]
+    market_aligned = market_returns.loc[common_idx]
+    factor_aligned = factor_returns.loc[common_idx, factor_names]
+
+    X = np.column_stack([market_aligned.values, factor_aligned.values])
+
+    betas_rows: dict[str, np.ndarray] = {}
+    pvals_rows: dict[str, np.ndarray] = {}
+    r2_map: dict[str, float] = {}
+    alpha_ann_map: dict[str, float] = {}
+    nobs_map: dict[str, int] = {}
+    legs: dict[str, LegDecomposition] = {}
+
+    for ticker in stock_aligned.columns:
+        y_series = stock_aligned[ticker].dropna()
+        # Re-align X / regressors to the ticker's own non-null window — some
+        # tickers (recent IPOs) have shorter histories than the universe.
+        idx = y_series.index.intersection(common_idx)
+        if len(idx) < len(all_regressor_names) + 5:
+            # Need at least k+5 obs for a meaningful regression; skip otherwise.
+            continue
+        y = y_series.loc[idx].values
+        X_t = np.column_stack([
+            market_aligned.loc[idx].values,
+            factor_aligned.loc[idx].values,
+        ])
+        ols = _ols_regression(y, X_t, all_regressor_names)
+        leg = _build_leg(ols, stock_aligned[ticker].loc[idx], idx)
+
+        betas_rows[ticker] = ols.betas
+        # p_values has the intercept first; we want only regressor p-values.
+        pvals_rows[ticker] = ols.p_values[1:]
+        r2_map[ticker] = ols.r_squared
+        alpha_ann_map[ticker] = ols.alpha * ANNUALIZATION_FACTOR
+        nobs_map[ticker] = ols.n_obs
+        legs[ticker] = leg
+
+    if not betas_rows:
+        return PerTickerExposures(
+            tickers=[],
+            factor_names=all_regressor_names,
+            betas=pd.DataFrame(columns=all_regressor_names),
+            pvalues=pd.DataFrame(columns=all_regressor_names),
+            significance=pd.DataFrame(columns=all_regressor_names),
+            r_squared=pd.Series(dtype=float),
+            alpha_ann=pd.Series(dtype=float),
+            n_obs=pd.Series(dtype=int),
+            per_ticker_legs={},
+            market_index=market_index,
+        )
+
+    tickers = list(betas_rows.keys())
+    betas_df = pd.DataFrame(betas_rows, index=all_regressor_names).T
+    pvals_df = pd.DataFrame(pvals_rows, index=all_regressor_names).T
+    sig_df = pvals_df.map(_significance_star)
+
+    return PerTickerExposures(
+        tickers=tickers,
+        factor_names=all_regressor_names,
+        betas=betas_df,
+        pvalues=pvals_df,
+        significance=sig_df,
+        r_squared=pd.Series(r2_map),
+        alpha_ann=pd.Series(alpha_ann_map),
+        n_obs=pd.Series(nobs_map),
+        per_ticker_legs=legs,
+        market_index=market_index,
     )
