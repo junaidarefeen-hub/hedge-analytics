@@ -15,9 +15,15 @@ from analytics.custom_hedge import (
 from analytics.drawdown import compute_drawdowns
 from analytics.factor_analytics import FactorAnalyticsResult, run_factor_analytics
 from analytics.montecarlo import MonteCarloResult, run_monte_carlo
+from analytics.regime import (
+    CorrelationRegimeResult,
+    correlation_regime_hedge_metrics,
+    detect_correlation_regimes,
+)
 from config import (
     CHA_DEFAULT_HEDGE_NOTIONAL,
     CHA_DEFAULT_LONG_NOTIONAL,
+    CORR_REGIME_N_REGIMES,
     DEFAULT_RISK_FREE_RATE,
     DEFAULT_ROLLING_VOL_WINDOW,
     FA_DEFAULT_P_THRESHOLD,
@@ -27,6 +33,7 @@ from config import (
     MC_HORIZON_OPTIONS,
     MC_NUM_SIMS_OPTIONS,
     MC_SPAGHETTI_PATHS,
+    REGIME_METHODS,
 )
 from data.factor_loader import FactorData, align_factor_returns
 from ui.factor_analytics import (
@@ -37,6 +44,7 @@ from ui.factor_analytics import (
     _render_vol_decomposition,
 )
 from ui.montecarlo import _distribution_chart, _fan_chart, _spaghetti_chart
+from ui.regime import regime_boxplot_chart, render_corr_regime_metrics_table, rolling_corr_regime_chart
 from ui.style import PLOTLY_LAYOUT, render_metrics_table
 from ui.weight_helpers import equal_weight, handle_normalize, sync_weights
 from utils.basket import inject_basket_column
@@ -267,6 +275,8 @@ def render_custom_hedge_tab(
                 end_date=pd.Timestamp(cha_end),
             )
             st.session_state["cha_result"] = result
+            st.session_state.pop("cha_cr_result", None)
+            st.session_state.pop("cha_cr_metrics", None)
         except Exception as e:
             st.error(f"Analysis failed: {e}")
             return
@@ -285,6 +295,9 @@ def render_custom_hedge_tab(
     # ── Factor Exposure Section ──────────────────────────────────────────
     if factor_data is not None:
         _render_factor_section(returns, result, factor_data, params)
+
+    # ── Correlation Regime Section ────────────────────────────────────────
+    _render_correlation_regime_section(result)
 
 
 def _render_results(
@@ -853,3 +866,71 @@ def _render_fa_results(result: FactorAnalyticsResult):
         key="cha_fa_vol_window",
     )
     _render_vol_decomposition(legs, vol_window, key_prefix="cha_fa")
+
+
+# ── Correlation Regime Section ────────────────────────────────────────────
+
+
+def _render_correlation_regime_section(result: CustomHedgeResult):
+    """Correlation regime analysis for the custom hedge position."""
+    st.divider()
+    st.subheader("Correlation Regime Analysis")
+    st.caption(
+        "Classify the rolling correlation between your long portfolio and hedge basket into regimes. "
+        "Shows how hedge effectiveness varies when correlations are low vs high — "
+        "critical for understanding whether your hedge holds up in crisis periods."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        cr_n = st.number_input(
+            "# Correlation regimes", min_value=2, max_value=5,
+            value=CORR_REGIME_N_REGIMES, step=1, key="cha_cr_n",
+        )
+    with c2:
+        cr_method = st.selectbox(
+            "Method", options=REGIME_METHODS, index=0, key="cha_cr_method",
+        )
+
+    if st.button(
+        "Analyze Correlation Regimes", type="secondary",
+        use_container_width=True, key="cha_cr_run",
+    ):
+        try:
+            cr_result = detect_correlation_regimes(
+                result.rolling_correlation, cr_n, cr_method,
+            )
+            cr_metrics = correlation_regime_hedge_metrics(
+                result.daily_standalone, result.daily_hedged,
+                result.daily_hedge_basket, cr_result.regime_series,
+                cr_result.labels,
+            )
+            st.session_state["cha_cr_result"] = cr_result
+            st.session_state["cha_cr_metrics"] = cr_metrics
+        except Exception as e:
+            st.error(f"Correlation regime analysis failed: {e}")
+            return
+
+    cr_result: CorrelationRegimeResult | None = st.session_state.get("cha_cr_result")
+    cr_metrics = st.session_state.get("cha_cr_metrics")
+    if cr_result is None:
+        st.info("Click **Analyze Correlation Regimes** to see results.")
+        return
+
+    # Rolling correlation chart with regime bands
+    st.plotly_chart(
+        rolling_corr_regime_chart(cr_result, result.full_period_correlation),
+        use_container_width=True,
+        key="cha_cr_corr_chart",
+    )
+
+    # Per-regime metrics table
+    if cr_metrics is not None:
+        render_corr_regime_metrics_table(cr_metrics)
+
+    # Box plot of daily hedged returns by regime
+    st.plotly_chart(
+        regime_boxplot_chart(result.daily_hedged, cr_result.regime_series, cr_result.labels),
+        use_container_width=True,
+        key="cha_cr_boxplot",
+    )

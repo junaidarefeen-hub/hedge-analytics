@@ -1,15 +1,17 @@
-"""Load factor data from Prismatic (primary) or Factor Prices.xlsx (fallback).
+"""Load factor data from Prismatic with local Parquet cache fallback.
 
 Prismatic data is cached locally as a Parquet file to avoid slow MCP round-trips
 on every app startup. The cache is refreshed via the sidebar "Reload factor data"
 button or when the Parquet file is older than FACTOR_CACHE_MAX_AGE_HOURS.
+
+When ECM/Prismatic is unavailable (e.g. on Render), the loader uses the committed
+Parquet cache. Staleness is reported based on the last date in the data.
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +20,6 @@ import pandas as pd
 import streamlit as st
 
 from config import (
-    FA_FACTOR_XLSX,
     FACTOR_CACHE_MAX_AGE_HOURS,
     FACTOR_GADGET_IDS,
     FACTOR_MODEL_PREFIX,
@@ -26,10 +27,8 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-_XLSX_PATH = os.path.join(os.path.dirname(__file__), "..", FA_FACTOR_XLSX)
 _CACHE_DIR = Path(__file__).resolve().parent / "cache"
 _CACHE_PARQUET = _CACHE_DIR / "factor_prices.parquet"
-_CACHE_META = _CACHE_DIR / "factor_meta.json"
 
 
 @dataclass
@@ -164,62 +163,36 @@ def _load_prismatic_with_cache() -> FactorData:
 
 
 # ---------------------------------------------------------------------------
-# Excel loader (fallback)
-# ---------------------------------------------------------------------------
-
-
-def _load_from_excel() -> FactorData:
-    """Parse Factor Prices.xlsx and return factor prices + returns."""
-    df = pd.read_excel(_XLSX_PATH, header=None, engine="openpyxl")
-
-    tickers = [str(v).strip() for v in df.iloc[0, 5:21].tolist()]
-    names = [str(v).strip() for v in df.iloc[3, 5:21].tolist()]
-
-    ticker_map = dict(zip(names, tickers))
-    name_map = dict(zip(tickers, names))
-
-    data = df.iloc[5:].copy()
-    dates = pd.to_datetime(data.iloc[:, 2], errors="coerce")
-
-    prices = data.iloc[:, 5:21].copy()
-    prices.columns = names
-    prices.index = dates
-    prices.index.name = None
-
-    prices = prices.apply(pd.to_numeric, errors="coerce")
-    prices = prices[prices.index.notna()]
-    prices = prices.dropna(how="all")
-    prices = prices.sort_index()
-
-    returns = prices.pct_change(fill_method=None)
-
-    return FactorData(prices=prices, returns=returns, ticker_map=ticker_map, name_map=name_map)
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
 @st.cache_data(ttl=86400, show_spinner="Loading factor data...")
 def load_factor_data() -> FactorData:
-    """Load factor data: Prismatic (with cache) → Excel fallback."""
-    try:
-        return _load_prismatic_with_cache()
-    except Exception as e:
-        logger.warning(f"Prismatic factor load failed ({e}) — falling back to Excel.")
-        return _load_from_excel()
+    """Load factor data: Prismatic with local Parquet cache fallback."""
+    return _load_prismatic_with_cache()
 
 
 def clear_factor_cache():
-    """Clear both the Streamlit cache and the local Parquet cache.
+    """Clear Streamlit cache and optionally the local Parquet cache.
 
-    Forces a fresh fetch from Prismatic on next access.
+    Only deletes the Parquet file when ECM is available (can re-fetch).
+    On Render (no ECM), keeps the Parquet so data remains accessible.
     """
     load_factor_data.clear()
-    if _CACHE_PARQUET.exists():
+    from data.ecm_client import is_available
+
+    if is_available() and _CACHE_PARQUET.exists():
         _CACHE_PARQUET.unlink()
         logger.info("Local factor Parquet cache deleted.")
+
+
+def get_factor_staleness_days(factor_data: FactorData) -> int | None:
+    """Return calendar days between the last factor data date and today."""
+    if factor_data is None or factor_data.prices.empty:
+        return None
+    last_date = factor_data.prices.index.max()
+    return (pd.Timestamp.today().normalize() - last_date.normalize()).days
 
 
 def align_factor_returns(

@@ -6,8 +6,23 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from analytics.regime import RegimeResult, detect_regimes, regime_hedge_effectiveness
-from config import REGIME_LABELS, REGIME_METHODS, REGIME_N_REGIMES, REGIME_VOL_WINDOW
+import numpy as np
+
+from analytics.regime import (
+    CorrelationRegimeResult,
+    RegimeResult,
+    correlation_regime_hedge_metrics,
+    detect_correlation_regimes,
+    detect_regimes,
+    regime_hedge_effectiveness,
+)
+from config import (
+    CORR_REGIME_N_REGIMES,
+    REGIME_LABELS,
+    REGIME_METHODS,
+    REGIME_N_REGIMES,
+    REGIME_VOL_WINDOW,
+)
 from ui.style import PLOTLY_LAYOUT
 from utils.basket import basket_display_name, inject_basket_column
 
@@ -204,3 +219,194 @@ def render_regime_tab(returns: pd.DataFrame, params: dict):
             st.dataframe(fmt_eff, use_container_width=True)
         except Exception as e:
             st.warning(f"Could not compute hedge effectiveness: {e}")
+
+        # Correlation regime analysis for optimizer hedges
+        _render_optimizer_corr_regimes(returns, hedge_result, eff_returns, eff_target, vol_window)
+
+
+# ── Shared Correlation Regime Charts ─────────────────────────────────────
+
+
+def rolling_corr_regime_chart(
+    corr_regime: CorrelationRegimeResult,
+    full_period_corr: float | None = None,
+) -> go.Figure:
+    """Rolling correlation chart with regime-colored background bands."""
+    series = corr_regime.rolling_correlation
+    regime_series = corr_regime.regime_series
+    labels = corr_regime.labels
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=series.index, y=series.values,
+        mode="lines", name="Rolling Correlation",
+        line=dict(width=2, color="#2563eb"),
+        hovertemplate="%{x|%b %d, %Y}<br>Corr: %{y:.3f}<extra></extra>",
+    ))
+
+    # Regime background bands
+    prev_regime = None
+    band_start = None
+    for date, regime in regime_series.items():
+        if regime != prev_regime:
+            if prev_regime is not None and band_start is not None:
+                color = _REGIME_COLORS[prev_regime % len(_REGIME_COLORS)]
+                fig.add_vrect(x0=band_start, x1=date, fillcolor=color, opacity=0.15, line_width=0)
+            band_start = date
+            prev_regime = regime
+    if prev_regime is not None and band_start is not None:
+        color = _REGIME_COLORS[prev_regime % len(_REGIME_COLORS)]
+        fig.add_vrect(x0=band_start, x1=regime_series.index[-1], fillcolor=color, opacity=0.15, line_width=0)
+
+    # Legend traces
+    for regime_id in sorted(regime_series.unique()):
+        color = _REGIME_COLORS[regime_id % len(_REGIME_COLORS)]
+        label = labels.get(regime_id, f"Regime {regime_id}")
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=12, color=color, symbol="square"),
+            name=label, showlegend=True,
+        ))
+
+    if full_period_corr is not None:
+        fig.add_hline(
+            y=full_period_corr, line_dash="dash", line_color="#dc2626", line_width=1,
+            annotation_text=f"Full-period: {full_period_corr:.3f}",
+            annotation_position="top left",
+        )
+    fig.add_hline(y=0, line_dash="dot", line_color="#cbd5e1", line_width=1)
+
+    fig.update_layout(**PLOTLY_LAYOUT)
+    fig.update_layout(
+        title="Rolling Correlation by Regime",
+        yaxis_title="Correlation",
+        yaxis=dict(range=[-1.05, 1.05]),
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+def regime_boxplot_chart(
+    daily_hedged: pd.Series,
+    regime_series: pd.Series,
+    labels: dict[int, str],
+) -> go.Figure:
+    """Box plot of daily hedged returns by correlation regime."""
+    common = daily_hedged.index.intersection(regime_series.index)
+    hedged = daily_hedged.loc[common]
+    regimes = regime_series.loc[common]
+
+    fig = go.Figure()
+    for regime_id in sorted(regimes.unique()):
+        mask = regimes == regime_id
+        color = _REGIME_COLORS[regime_id % len(_REGIME_COLORS)]
+        label = labels.get(regime_id, f"Regime {regime_id}")
+        fig.add_trace(go.Box(
+            y=hedged[mask].values,
+            name=label,
+            marker_color=color,
+            boxmean=True,
+            hovertemplate=f"{label}<br>Return: %{{y:.4f}}<extra></extra>",
+        ))
+
+    fig.add_hline(y=0, line_dash="dot", line_color="#94a3b8", line_width=1)
+    fig.update_layout(**PLOTLY_LAYOUT)
+    fig.update_layout(
+        title="Daily Hedged Return Distribution by Correlation Regime",
+        yaxis_title="Daily Hedged Return",
+        height=400,
+        showlegend=False,
+    )
+    return fig
+
+
+def render_corr_regime_metrics_table(metrics: pd.DataFrame):
+    """Format and render the correlation regime hedge metrics table."""
+    fmt = metrics.copy()
+    for col in ["Avg Correlation"]:
+        if col in fmt.columns:
+            fmt[col] = fmt[col].map("{:.3f}".format)
+    for col in ["Unhedged Vol", "Hedged Vol"]:
+        if col in fmt.columns:
+            fmt[col] = fmt[col].map("{:.2%}".format)
+    if "Vol Reduction (%)" in fmt.columns:
+        fmt["Vol Reduction (%)"] = fmt["Vol Reduction (%)"].map("{:.1f}%".format)
+    for col in ["Avg Unhedged Return (ann.)", "Avg Hedged Return (ann.)"]:
+        if col in fmt.columns:
+            fmt[col] = fmt[col].map("{:.2%}".format)
+    st.dataframe(fmt, use_container_width=True)
+
+
+# ── Optimizer Correlation Regime Section ─────────────────────────────────
+
+
+def _render_optimizer_corr_regimes(returns, hedge_result, eff_returns, eff_target, vol_window):
+    """Correlation regime analysis using optimizer hedge result."""
+    st.subheader("Correlation Regime Analysis")
+    st.caption(
+        "Classify the rolling correlation between your long portfolio and hedge basket into regimes. "
+        "Shows how hedge effectiveness varies when correlations are low vs high."
+    )
+
+    # Reconstruct daily series from optimizer result
+    daily_standalone = eff_returns[eff_target].dropna()
+    daily_hedge_basket = pd.Series(
+        eff_returns[hedge_result.hedge_instruments].dropna().values @ np.abs(hedge_result.weights),
+        index=eff_returns[hedge_result.hedge_instruments].dropna().index,
+    )
+    common = daily_standalone.index.intersection(daily_hedge_basket.index)
+    daily_standalone = daily_standalone.loc[common]
+    daily_hedge_basket = daily_hedge_basket.loc[common]
+    daily_hedged = daily_standalone + pd.Series(
+        eff_returns[hedge_result.hedge_instruments].loc[common].values @ hedge_result.weights,
+        index=common,
+    )
+
+    rolling_corr = daily_standalone.rolling(window=vol_window, min_periods=vol_window).corr(daily_hedge_basket)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        cr_n = st.number_input(
+            "# Correlation regimes", min_value=2, max_value=5,
+            value=CORR_REGIME_N_REGIMES, step=1, key="reg_cr_n",
+        )
+    with c2:
+        cr_method = st.selectbox(
+            "Method", options=REGIME_METHODS, index=0, key="reg_cr_method",
+        )
+
+    if st.button("Analyze Correlation Regimes", type="secondary", use_container_width=True, key="reg_cr_run"):
+        try:
+            cr_result = detect_correlation_regimes(rolling_corr, cr_n, cr_method)
+            cr_metrics = correlation_regime_hedge_metrics(
+                daily_standalone, daily_hedged, daily_hedge_basket,
+                cr_result.regime_series, cr_result.labels,
+            )
+            st.session_state["reg_cr_result"] = cr_result
+            st.session_state["reg_cr_metrics"] = cr_metrics
+        except Exception as e:
+            st.error(f"Correlation regime analysis failed: {e}")
+            return
+
+    cr_result: CorrelationRegimeResult | None = st.session_state.get("reg_cr_result")
+    cr_metrics = st.session_state.get("reg_cr_metrics")
+    if cr_result is None:
+        st.info("Click **Analyze Correlation Regimes** to see results.")
+        return
+
+    full_corr = float(daily_standalone.corr(daily_hedge_basket))
+    st.plotly_chart(
+        rolling_corr_regime_chart(cr_result, full_corr),
+        use_container_width=True,
+        key="reg_cr_corr_chart",
+    )
+
+    if cr_metrics is not None:
+        render_corr_regime_metrics_table(cr_metrics)
+
+    st.plotly_chart(
+        regime_boxplot_chart(daily_hedged, cr_result.regime_series, cr_result.labels),
+        use_container_width=True,
+        key="reg_cr_boxplot",
+    )

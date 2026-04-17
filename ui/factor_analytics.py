@@ -38,7 +38,7 @@ def render_factor_analytics_tab(
     )
 
     if factor_data is None:
-        st.warning("Factor data not available. Check that Factor Prices.xlsx exists.")
+        st.warning("Factor data not available. Reload via sidebar or check Prismatic connection.")
         return
 
     # ── Portfolio Definition ──────────────────────────────────────────────

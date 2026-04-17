@@ -1,4 +1,4 @@
-"""Regime detection — volatility-based regime classification."""
+"""Regime detection — volatility and correlation based regime classification."""
 
 from __future__ import annotations
 
@@ -17,6 +17,14 @@ class RegimeResult:
     labels: dict[int, str]
     rolling_vol: pd.Series
     per_regime_stats: pd.DataFrame  # rows = regimes, cols = avg_return, vol, count, pct_of_time
+
+
+@dataclass
+class CorrelationRegimeResult:
+    regime_series: pd.Series  # int regime labels, aligned to rolling correlation index
+    labels: dict[int, str]  # e.g. {0: "Low Corr", 1: "Normal Corr", 2: "High Corr"}
+    rolling_correlation: pd.Series  # the input series (for charting)
+    per_regime_stats: pd.DataFrame  # avg corr, count, % of time
 
 
 def detect_regimes(
@@ -138,6 +146,117 @@ def regime_hedge_effectiveness(
             "Vol Reduction (%)": vol_red,
             "Avg Hedged Return (ann.)": avg_ret,
             "Correlation": corr,
+            "Days": int(mask.sum()),
+        })
+
+    return pd.DataFrame(rows).set_index("Regime")
+
+
+def detect_correlation_regimes(
+    rolling_corr: pd.Series,
+    n_regimes: int = 3,
+    method: str = "quantile",
+    labels: dict[int, str] | None = None,
+) -> CorrelationRegimeResult:
+    """Classify rolling correlation into regimes.
+
+    Args:
+        rolling_corr: Rolling correlation series (may contain NaN from warmup).
+        n_regimes: Number of regimes to detect.
+        method: 'quantile' or 'kmeans'.
+        labels: Optional label mapping.
+    """
+    clean = rolling_corr.dropna()
+
+    if len(clean) < n_regimes:
+        raise ValueError(f"Not enough data points ({len(clean)}) for {n_regimes} regimes.")
+
+    if method == "quantile":
+        quantiles = np.linspace(0, 1, n_regimes + 1)[1:-1]
+        thresholds = np.quantile(clean.values, quantiles)
+        regime_vals = np.zeros(len(clean), dtype=int)
+        for thresh in thresholds:
+            regime_vals += (clean.values > thresh).astype(int)
+        regime_series = pd.Series(regime_vals, index=clean.index, name="CorrRegime")
+
+    elif method == "kmeans":
+        corr_data = clean.values.reshape(-1, 1)
+        centroids, regime_vals = kmeans2(corr_data, n_regimes, minit="points", seed=42)
+        order = np.argsort(centroids.flatten())
+        remap = {old: new for new, old in enumerate(order)}
+        regime_vals = np.array([remap[v] for v in regime_vals])
+        regime_series = pd.Series(regime_vals, index=clean.index, name="CorrRegime")
+    else:
+        raise ValueError(f"Unknown method: {method}")
+
+    if labels is None:
+        if n_regimes == 3:
+            labels = {0: "Low Corr", 1: "Normal Corr", 2: "High Corr"}
+        else:
+            labels = {i: f"Corr Regime {i}" for i in range(n_regimes)}
+
+    stats_rows = []
+    for regime_id in range(n_regimes):
+        mask = regime_series == regime_id
+        count = int(mask.sum())
+        stats_rows.append({
+            "Regime": labels.get(regime_id, f"Corr Regime {regime_id}"),
+            "Avg Correlation": float(clean[mask].mean()) if count > 0 else 0.0,
+            "Count": count,
+            "% of Time": float(count / len(regime_series) * 100) if len(regime_series) > 0 else 0.0,
+        })
+
+    per_regime_stats = pd.DataFrame(stats_rows).set_index("Regime")
+
+    return CorrelationRegimeResult(
+        regime_series=regime_series,
+        labels=labels,
+        rolling_correlation=clean,
+        per_regime_stats=per_regime_stats,
+    )
+
+
+def correlation_regime_hedge_metrics(
+    daily_standalone: pd.Series,
+    daily_hedged: pd.Series,
+    daily_hedge_basket: pd.Series,
+    regime_series: pd.Series,
+    labels: dict[int, str] | None = None,
+) -> pd.DataFrame:
+    """Compute hedge effectiveness metrics per correlation regime.
+
+    Takes pre-computed daily return series (from CustomHedgeResult or
+    reconstructed from optimizer HedgeResult) and a regime classification.
+    """
+    common_idx = daily_standalone.index.intersection(regime_series.index)
+    standalone = daily_standalone.loc[common_idx]
+    hedged = daily_hedged.loc[common_idx]
+    hedge_basket = daily_hedge_basket.loc[common_idx]
+    regimes = regime_series.loc[common_idx]
+
+    n_regimes = int(regimes.max()) + 1
+    if labels is None:
+        labels = {i: f"Corr Regime {i}" for i in range(n_regimes)}
+
+    rows = []
+    for regime_id in range(n_regimes):
+        mask = regimes == regime_id
+        if mask.sum() < 2:
+            continue
+        avg_corr = float(standalone[mask].corr(hedge_basket[mask]))
+        un_vol = float(standalone[mask].std() * np.sqrt(ANNUALIZATION_FACTOR))
+        h_vol = float(hedged[mask].std() * np.sqrt(ANNUALIZATION_FACTOR))
+        vol_red = (1 - h_vol / un_vol) * 100 if un_vol > 0 else 0.0
+        avg_h_ret = float(hedged[mask].mean() * ANNUALIZATION_FACTOR)
+        avg_u_ret = float(standalone[mask].mean() * ANNUALIZATION_FACTOR)
+        rows.append({
+            "Regime": labels.get(regime_id, f"Corr Regime {regime_id}"),
+            "Avg Correlation": avg_corr,
+            "Unhedged Vol": un_vol,
+            "Hedged Vol": h_vol,
+            "Vol Reduction (%)": vol_red,
+            "Avg Unhedged Return (ann.)": avg_u_ret,
+            "Avg Hedged Return (ann.)": avg_h_ret,
             "Days": int(mask.sum()),
         })
 

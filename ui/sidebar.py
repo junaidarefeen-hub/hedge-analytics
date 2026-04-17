@@ -16,6 +16,9 @@ from config import (
 )
 from data.factor_loader import clear_factor_cache
 from data.fetcher import clear_cache, validate_interval_date_range
+from data.market_monitor.cache_manager import clear_cache as clear_mm_cache
+from data.market_monitor.cache_manager import get_metadata as get_mm_metadata
+from data.market_monitor.cache_manager import is_stale as is_mm_stale
 from utils.validation import parse_tickers, validate_date_range
 
 _LOCAL_PEER_GROUPS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "peer_groups.json")
@@ -223,6 +226,40 @@ def render_sidebar() -> dict | None:
             st.success("Cache cleared. Data will be re-fetched on next run.")
         if st.button("Reload factor data", key="reload_factors"):
             clear_factor_cache()
+            st.rerun()
+
+        st.divider()
+
+        # --- Market Monitor ---
+        st.subheader("Market Monitor")
+        mm_meta = get_mm_metadata()
+        if mm_meta:
+            last_ref = mm_meta.get("last_refresh", "Never")
+            if last_ref != "Never":
+                from datetime import datetime, timezone, timedelta
+                try:
+                    utc_time = datetime.fromisoformat(last_ref)
+                    if utc_time.tzinfo is None:
+                        utc_time = utc_time.replace(tzinfo=timezone.utc)
+                    et_time = utc_time.astimezone(timezone(timedelta(hours=-4)))
+                    last_ref = et_time.strftime("%Y-%m-%d %I:%M %p ET")
+                except (ValueError, TypeError):
+                    last_ref = last_ref[:19].replace("T", " ")
+            st.caption(f"Last refresh: {last_ref}")
+            st.caption(f"Tickers: {mm_meta.get('ticker_count', 0)} | Days: {mm_meta.get('row_count', 0)}")
+            if is_mm_stale():
+                st.warning("Market data is stale.", icon="⚠️")
+        else:
+            st.caption("No market data cached.")
+
+        if st.button("Refresh Market Data", key="mm_refresh", type="primary"):
+            st.session_state["mm_trigger_refresh"] = True
+            st.rerun()
+        st.caption("Live prices via yfinance. Historical data from RVX.")
+
+        if st.button("Clear market cache", key="mm_clear"):
+            clear_mm_cache()
+            st.success("Market monitor cache cleared.")
             st.rerun()
 
     return {

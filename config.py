@@ -146,4 +146,44 @@ FA_DEFAULT_LONG_NOTIONAL = 10_000_000.0
 FA_DEFAULT_SHORT_NOTIONAL = 10_000_000.0
 FA_DEFAULT_P_THRESHOLD = 0.05
 FA_SIGNIFICANCE_LEVELS = {0.01: "***", 0.05: "**", 0.10: "*"}
-FA_FACTOR_XLSX = "Factor Prices.xlsx"
+# ---------------------------------------------------------------------------
+# Market Monitor
+# ---------------------------------------------------------------------------
+MM_CACHE_DIR = "data/cache/market_monitor"
+MM_CACHE_MAX_AGE_HOURS = 12  # warn if data older than this
+MM_DEFAULT_LOOKBACK_DAYS = 3650  # 10 years of history for full rebuild
+MM_RVX_MAX_WORKERS = 15  # parallel RVX fetch threads
+
+# Multi-period return windows (trading days)
+MM_PERIODS = {
+    "1D": 1,
+    "1W": 5,
+    "1M": 21,
+    "3M": 63,
+    "6M": 126,
+    "YTD": None,  # computed dynamically
+    "1Y": 252,
+}
+
+# Reversion signal defaults
+MM_RSI_WINDOW = 14
+MM_ZSCORE_WINDOWS = [20, 60]
+MM_MA_WINDOWS = [50, 200]
+MM_BOLLINGER_WINDOW = 20
+MM_BOLLINGER_STD = 2.0
+MM_COMPOSITE_WEIGHTS = {
+    "rsi_14": 0.30,
+    "zscore_20d": 0.25,
+    "zscore_60d": 0.15,
+    "ma_distance_50d": 0.15,
+    "bollinger_pctb": 0.15,
+}
+
+# Factor monitor
+MM_FACTOR_BETA_WINDOW = 120  # OLS lookback for stock-level factor betas
+MM_FACTOR_TREND_SHORT = 20  # short MA for trend detection
+MM_FACTOR_TREND_LONG = 60  # long MA for trend detection
+
+# Trade screener
+MM_REVERSION_THRESHOLD = 25  # composite score <= this = oversold candidate
+MM_FACTOR_BETA_THRESHOLD = 1.0  # min absolute beta to qualify as factor play

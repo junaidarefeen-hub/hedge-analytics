@@ -10,3 +10,7 @@ build/
 .streamlit/secrets.toml
 data/cache/*
 !data/cache/factor_prices.parquet
+!data/cache/market_monitor/
+!data/cache/market_monitor/prices.parquet
+!data/cache/market_monitor/metadata.json
+*.log

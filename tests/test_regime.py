@@ -4,7 +4,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from analytics.regime import RegimeResult, detect_regimes, regime_hedge_effectiveness
+from analytics.custom_hedge import run_custom_hedge_analysis
+from analytics.regime import (
+    CorrelationRegimeResult,
+    RegimeResult,
+    correlation_regime_hedge_metrics,
+    detect_correlation_regimes,
+    detect_regimes,
+    regime_hedge_effectiveness,
+)
 
 
 class TestDetectRegimes:
@@ -104,3 +112,114 @@ class TestRegimeHedgeEffectiveness:
         # Days should be positive and sum should not exceed total
         assert (eff["Days"] > 0).all()
         assert eff["Days"].sum() <= len(regime_result.regime_series)
+
+
+# ===========================================================================
+# Correlation Regime Tests
+# ===========================================================================
+
+
+class TestDetectCorrelationRegimes:
+    @pytest.fixture()
+    def rolling_corr(self, returns):
+        return returns["AAPL"].rolling(30).corr(returns["SPY"])
+
+    def test_returns_result(self, rolling_corr):
+        result = detect_correlation_regimes(rolling_corr, n_regimes=3, method="quantile")
+        assert isinstance(result, CorrelationRegimeResult)
+
+    def test_regime_count_matches(self, rolling_corr):
+        result = detect_correlation_regimes(rolling_corr, n_regimes=3, method="quantile")
+        assert len(result.regime_series.unique()) == 3
+
+    def test_series_length_matches_dropna(self, rolling_corr):
+        result = detect_correlation_regimes(rolling_corr, n_regimes=3, method="quantile")
+        assert len(result.regime_series) == len(rolling_corr.dropna())
+
+    def test_regime_0_lowest_corr_quantile(self, rolling_corr):
+        result = detect_correlation_regimes(rolling_corr, n_regimes=3, method="quantile")
+        stats = result.per_regime_stats
+        corrs = stats["Avg Correlation"]
+        assert corrs.iloc[0] <= corrs.iloc[-1]
+
+    def test_regime_0_lowest_corr_kmeans(self, rolling_corr):
+        result = detect_correlation_regimes(rolling_corr, n_regimes=3, method="kmeans")
+        stats = result.per_regime_stats
+        corrs = stats["Avg Correlation"]
+        assert corrs.iloc[0] <= corrs.iloc[-1]
+
+    def test_per_regime_stats_sum_to_total(self, rolling_corr):
+        result = detect_correlation_regimes(rolling_corr, n_regimes=3, method="quantile")
+        total = int(result.per_regime_stats["Count"].sum())
+        assert total == len(result.regime_series)
+
+    def test_insufficient_data_raises(self):
+        tiny = pd.Series([0.5, 0.6], index=pd.bdate_range("2023-01-01", periods=2))
+        with pytest.raises(ValueError, match="Not enough data"):
+            detect_correlation_regimes(tiny, n_regimes=5)
+
+    def test_labels_default_3_regimes(self, rolling_corr):
+        result = detect_correlation_regimes(rolling_corr, n_regimes=3, method="quantile")
+        assert result.labels == {0: "Low Corr", 1: "Normal Corr", 2: "High Corr"}
+
+    def test_unknown_method_raises(self, rolling_corr):
+        with pytest.raises(ValueError, match="Unknown method"):
+            detect_correlation_regimes(rolling_corr, method="invalid")
+
+
+class TestCorrelationRegimeHedgeMetrics:
+    @pytest.fixture()
+    def cha_result(self, returns):
+        return run_custom_hedge_analysis(
+            returns=returns,
+            long_tickers=["AAPL", "MSFT"],
+            long_weights=np.array([0.6, 0.4]),
+            long_notional=10_000_000.0,
+            hedge_tickers=["SPY", "QQQ"],
+            hedge_weights=np.array([0.5, 0.5]),
+            hedge_notional=10_000_000.0,
+            rolling_window=30,
+        )
+
+    @pytest.fixture()
+    def corr_regime(self, cha_result):
+        return detect_correlation_regimes(
+            cha_result.rolling_correlation, n_regimes=3, method="quantile",
+        )
+
+    def test_one_row_per_regime(self, cha_result, corr_regime):
+        metrics = correlation_regime_hedge_metrics(
+            cha_result.daily_standalone, cha_result.daily_hedged,
+            cha_result.daily_hedge_basket, corr_regime.regime_series,
+            corr_regime.labels,
+        )
+        assert len(metrics) <= 3
+        assert len(metrics) >= 1
+
+    def test_vol_reduction_formula(self, cha_result, corr_regime):
+        metrics = correlation_regime_hedge_metrics(
+            cha_result.daily_standalone, cha_result.daily_hedged,
+            cha_result.daily_hedge_basket, corr_regime.regime_series,
+            corr_regime.labels,
+        )
+        for _, row in metrics.iterrows():
+            if row["Unhedged Vol"] > 0:
+                expected = (1 - row["Hedged Vol"] / row["Unhedged Vol"]) * 100
+                assert row["Vol Reduction (%)"] == pytest.approx(expected, rel=1e-6)
+
+    def test_days_sum(self, cha_result, corr_regime):
+        metrics = correlation_regime_hedge_metrics(
+            cha_result.daily_standalone, cha_result.daily_hedged,
+            cha_result.daily_hedge_basket, corr_regime.regime_series,
+            corr_regime.labels,
+        )
+        common = cha_result.daily_standalone.index.intersection(corr_regime.regime_series.index)
+        assert metrics["Days"].sum() <= len(common)
+
+    def test_correlation_bounded(self, cha_result, corr_regime):
+        metrics = correlation_regime_hedge_metrics(
+            cha_result.daily_standalone, cha_result.daily_hedged,
+            cha_result.daily_hedge_basket, corr_regime.regime_series,
+            corr_regime.labels,
+        )
+        assert (metrics["Avg Correlation"].abs() <= 1.0).all()

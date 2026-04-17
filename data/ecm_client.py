@@ -232,6 +232,44 @@ def read_share_file(file_path: str) -> str:
     return _mcp_tool_call(token, "ecm_get_share_file", {"file_path": file_path})
 
 
+def fetch_rvx_series(
+    ticker: str,
+    attribute: str,
+    start_date: str,
+    end_date: str,
+    format: str = "json",
+    intraday_mode: str | None = None,
+) -> str:
+    """Fetch a timeseries from RVX.
+
+    Args:
+        ticker: RVX ticker (e.g. "EQSN AAPL", "SPX").
+        attribute: RVX attribute (e.g. "EQD(PRICE)").
+        start_date: ISO date string (YYYY-MM-DD).
+        end_date: ISO date string (YYYY-MM-DD).
+        format: "json" for inline data, "csv" for server file path.
+        intraday_mode: "hist_live" to include latest live price for current day.
+
+    Returns:
+        Text output from the MCP tool (JSON array or CSV file path).
+
+    Raises:
+        ECMAuthError: Authentication failed.
+        ECMFetchError: Fetch failed.
+    """
+    token = get_access_token()
+    args = {
+        "ticker": ticker,
+        "attribute": attribute,
+        "start_date": start_date,
+        "end_date": end_date,
+        "format": format,
+    }
+    if intraday_mode:
+        args["intraday_mode"] = intraday_mode
+    return _mcp_tool_call(token, "ecm_rvx_fetch_series", args)
+
+
 def is_available() -> bool:
     """Check if ECM MCP credentials are present and not obviously broken."""
     try:

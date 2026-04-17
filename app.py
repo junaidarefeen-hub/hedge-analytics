@@ -10,10 +10,14 @@ from analytics.returns import compute_returns
 from data.factor_loader import load_factor_data
 from data.fetcher import fetch_ticker_names, validate_and_fetch
 from ui.drawdown import render_drawdown_tab
+from ui.factor_monitor_tab import render_factor_monitor_tab
+from ui.market_snapshot_tab import render_market_snapshot_tab
 from ui.matrices import beta_heatmap, correlation_dendrogram, correlation_heatmap
 from ui.regime import render_regime_tab
+from ui.sector_reversion_tab import render_sector_reversion_tab
 from ui.sidebar import render_sidebar
 from ui.style import inject_css
+from ui.trade_ideas_tab import render_trade_ideas_tab
 from ui.backtest import render_backtest_tab
 from ui.compare import render_compare_tab
 from ui.custom_hedge import render_custom_hedge_tab
@@ -75,24 +79,38 @@ sufficiency_warn = check_data_sufficiency(len(returns), params["window"])
 if sufficiency_warn:
     st.warning(sufficiency_warn)
 
-# Load GS factor data from Excel
+# Load GS factor data (Prismatic → Parquet cache)
 try:
     factor_data = load_factor_data()
 except Exception as e:
-    st.warning(f"Could not load Factor Prices.xlsx — Factor Analytics tab will be unavailable. ({e})")
+    st.warning(f"Could not load factor data — Factor Analytics tab will be unavailable. ({e})")
     factor_data = None
+
+if factor_data is not None:
+    from data.factor_loader import get_factor_staleness_days
+
+    _staleness_days = get_factor_staleness_days(factor_data)
+    if _staleness_days is not None and _staleness_days > 2:
+        st.warning(
+            f"Factor data is {_staleness_days} days stale "
+            f"(last date: {factor_data.prices.index.max().strftime('%Y-%m-%d')}). "
+            f"Reload via sidebar button."
+        )
 
 # Tabs
 # Tab groups:
-#   Analysis (1-5):   Data · Price Performance · Correlation · Beta · Pairs/Spread
-#   Hedging  (6-11):  Hedge Optimizer · Strategy Compare · Backtest · Monte Carlo · Stress Test · Drawdown
-#   Deep     (12-14): Custom Hedge · Factor Analytics · Regime
+#   Analysis (1-5):       Data · Price Performance · Correlation · Beta · Pairs/Spread
+#   Hedging  (6-11):      Hedge Optimizer · Strategy Compare · Backtest · Monte Carlo · Stress Test · Drawdown
+#   Deep     (12-14):     Custom Hedge · Factor Analytics · Regime
+#   Market Monitor (15-18): Market Snapshot · Sector & Reversion · Factor Monitor · Trade Ideas
 (tab_data, tab_perf, tab_corr, tab_beta, tab_pairs,
  tab_optim, tab_compare, tab_backtest, tab_mc, tab_stress, tab_dd,
- tab_custom, tab_factor, tab_regime) = st.tabs([
+ tab_custom, tab_factor, tab_regime,
+ tab_mm_snapshot, tab_mm_sector, tab_mm_factors, tab_mm_trades) = st.tabs([
     "Data", "Price Performance", "Correlation", "Beta", "Pairs/Spread",
     "Hedge Optimizer", "Strategy Compare", "Backtest", "Monte Carlo", "Stress Test", "Drawdown",
     "Custom Hedge", "Factor Analytics", "Regime",
+    "Market Snapshot", "Sector & Reversion", "Factor Monitor", "Trade Ideas",
 ])
 
 # --- Data Tab ---
@@ -261,3 +279,111 @@ with tab_regime:
 # --- Factor Analytics ---
 with tab_factor:
     render_factor_analytics_tab(returns, params, factor_data)
+
+
+# ---------------------------------------------------------------------------
+# Market Monitor tabs — self-contained data loading from Parquet cache
+# ---------------------------------------------------------------------------
+from data.market_monitor.cache_manager import (
+    get_refresh_plan,
+    load_cached_prices,
+    merge_incremental,
+    save_prices,
+)
+from data.market_monitor.constituents import get_all_tickers
+
+
+@st.cache_data(ttl=300, show_spinner="Loading market data...")
+def _load_mm_prices():
+    """Load market monitor prices from Parquet cache."""
+    return load_cached_prices()
+
+
+def _run_mm_refresh():
+    """Intraday refresh: fetch today's live prices via yfinance.
+
+    RVX EQD only provides settled daily closes (no intraday).
+    yfinance provides live prices during market hours (~25s for 500 tickers).
+    Historical data (10yr) is pre-populated from RVX via the offline script.
+    """
+    import yfinance as yf
+
+    cached = load_cached_prices()
+
+    if cached is None or cached.empty:
+        st.error(
+            "No historical data cached. Run the bulk historical fetch first "
+            "(see CLAUDE.md for instructions)."
+        )
+        return
+
+    # Map cached tickers to yfinance format
+    # SPX -> ^GSPC for yfinance; also fetch SPY as live proxy
+    cached_tickers = list(cached.columns)
+    yf_tickers = [t for t in cached_tickers if t != "SPX"]
+    # Add SPY to get live S&P 500 proxy; we'll also try ^GSPC
+    yf_tickers.append("^GSPC")
+
+    with st.spinner("Fetching live prices via yfinance (~25s)..."):
+        data = yf.download(
+            yf_tickers, period="1d", interval="1d",
+            auto_adjust=True, progress=False, threads=True,
+        )
+
+    if data.empty:
+        st.error("yfinance returned no data.")
+        return
+
+    # Extract closes
+    if isinstance(data.columns, pd.MultiIndex):
+        closes = data["Close"]
+    else:
+        closes = data
+
+    # Rename ^GSPC back to SPX for our cache
+    if "^GSPC" in closes.columns:
+        closes = closes.rename(columns={"^GSPC": "SPX"})
+
+    # Only keep tickers that are in our cache
+    valid_cols = [c for c in closes.columns if c in cached.columns]
+    closes = closes[valid_cols]
+
+    if closes.empty:
+        st.error("No matching tickers returned from yfinance.")
+        return
+
+    # Merge with existing cache
+    merged = merge_incremental(cached, closes)
+    save_prices(merged)
+    _load_mm_prices.clear()
+
+    n_valid = closes.iloc[-1].dropna().count()
+    latest_date = closes.index[-1].date()
+    st.success(f"Live prices updated: {n_valid} tickers as of {latest_date}")
+
+
+# Handle refresh trigger from sidebar
+if st.session_state.pop("mm_trigger_refresh", False):
+    try:
+        _run_mm_refresh()
+    except Exception as e:
+        st.error(f"Market data refresh failed: {e}")
+
+mm_prices = _load_mm_prices()
+mm_data_available = mm_prices is not None and not mm_prices.empty
+
+# --- Market Snapshot ---
+with tab_mm_snapshot:
+    render_market_snapshot_tab(mm_prices, mm_data_available)
+
+# --- Sector & Reversion ---
+with tab_mm_sector:
+    render_sector_reversion_tab(mm_prices, mm_data_available)
+
+# --- Factor Monitor ---
+with tab_mm_factors:
+    render_factor_monitor_tab(mm_prices, factor_data, mm_data_available)
+
+# --- Trade Ideas ---
+with tab_mm_trades:
+    render_trade_ideas_tab(mm_prices, factor_data, mm_data_available)
