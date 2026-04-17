@@ -24,6 +24,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 from config import MM_DEFAULT_LOOKBACK_DAYS
 from data.market_monitor.cache_manager import (
     get_refresh_plan,
+    incremental_eod_refresh,
     load_cached_prices,
     merge_incremental,
     save_prices,
@@ -73,41 +74,33 @@ def full_refresh() -> None:
 
 
 def eod_refresh() -> None:
-    """Daily close refresh: incremental from last cached date."""
+    """Daily close refresh: incremental from last cached date.
+
+    Thin CLI wrapper around ``incremental_eod_refresh``; the two paths (this
+    script and the Streamlit sidebar button) share the same implementation.
+    """
     cached = load_cached_prices()
     if cached is None or cached.empty:
         print("ERROR: No cached data. Run --full first.")
         sys.exit(1)
 
     last_date = cached.index.max().date()
-    today = date.today()
-    all_tickers = list(cached.columns)
-
-    if last_date >= today:
-        print(f"Cache is up to date ({last_date}). Nothing to fetch.")
-        return
-
-    print(f"EOD refresh: {len(all_tickers)} tickers, {last_date} to {today}")
+    print(f"EOD refresh: {len(cached.columns)} tickers, {last_date} to {date.today()}")
 
     t0 = time.time()
-    new_prices, failed = fetch_prices(
-        all_tickers, last_date.isoformat(), today.isoformat(),
-        progress_callback=_progress,
-    )
+    result = incremental_eod_refresh(progress_callback=_progress)
     elapsed = time.time() - t0
     print()
 
-    if not new_prices.empty:
-        merged = merge_incremental(cached, new_prices)
-        save_prices(merged)
-        new_days = len(merged) - len(cached)
-        print(f"Added {new_days} new day(s). Total: {len(merged)} days.")
+    if result.skipped_reason:
+        print(result.skipped_reason)
     else:
-        print("No new data returned.")
+        print(f"Added {result.added_days} new day(s). Last date: {result.last_date}.")
 
     print(f"Elapsed: {elapsed:.0f}s")
-    if failed:
-        print(f"Failed ({len(failed)}): {', '.join(sorted(failed[:20]))}")
+    if result.failed_tickers:
+        print(f"Failed ({len(result.failed_tickers)}): "
+              f"{', '.join(sorted(result.failed_tickers[:20]))}")
 
 
 if __name__ == "__main__":

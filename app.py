@@ -388,12 +388,66 @@ def _run_mm_refresh():
     st.success(f"Live prices updated: {n_valid} tickers as of {latest_date}")
 
 
-# Handle refresh trigger from sidebar
+def _run_mm_eod_refresh():
+    """Incremental EOD refresh from RVX: fetch settled closes since last
+    cached date and merge them into the Parquet cache.
+
+    Distinct from ``_run_mm_refresh`` (yfinance live intraday). This pulls
+    the *settled* daily closes that RVX serves once each session has cleared.
+    Useful for catching the cache up between the scheduled 4:45 PM ET
+    refresh runs (e.g., weekend backfill, mid-day catch-up after a missed run).
+    """
+    from data.market_monitor.cache_manager import incremental_eod_refresh
+
+    progress_bar = st.progress(0.0, text="Fetching EOD closes from RVX...")
+
+    def _on_progress(completed, total):
+        progress_bar.progress(completed / total, text=f"RVX: {completed}/{total} tickers")
+
+    try:
+        result = incremental_eod_refresh(progress_callback=_on_progress)
+    finally:
+        progress_bar.empty()
+
+    _load_mm_prices.clear()
+
+    if result.skipped_reason:
+        st.info(result.skipped_reason)
+        return
+
+    # Append a signal snapshot so the new EOD row gets persisted to the
+    # delta-tracker too (mirrors the live-refresh path).
+    try:
+        from analytics.signal_history import append_snapshot, build_snapshot
+
+        merged = load_cached_prices()
+        sector_tickers = [c for c in merged.columns if c != "SPX"]
+        factor_returns = factor_data.returns if factor_data is not None else None
+        snap = build_snapshot(merged[sector_tickers], factor_returns=factor_returns)
+        append_snapshot(snap)
+    except Exception as snap_err:  # pragma: no cover — defensive
+        st.warning(f"Snapshot append failed (deltas may be stale): {snap_err}")
+
+    msg = (
+        f"EOD refresh: added {result.added_days} day(s), "
+        f"latest = {result.last_date}."
+    )
+    if result.failed_tickers:
+        msg += f" {len(result.failed_tickers)} ticker(s) failed."
+    st.success(msg)
+
+
+# Handle refresh triggers from sidebar
 if st.session_state.pop("mm_trigger_refresh", False):
     try:
         _run_mm_refresh()
     except Exception as e:
         st.error(f"Market data refresh failed: {e}")
+if st.session_state.pop("mm_trigger_eod_refresh", False):
+    try:
+        _run_mm_eod_refresh()
+    except Exception as e:
+        st.error(f"EOD refresh failed: {e}")
 
 mm_prices = _load_mm_prices()
 mm_data_available = mm_prices is not None and not mm_prices.empty

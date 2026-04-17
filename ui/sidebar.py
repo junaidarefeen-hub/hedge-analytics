@@ -257,6 +257,14 @@ def render_sidebar() -> dict | None:
             st.rerun()
         st.caption("Live prices via yfinance. Historical data from RVX.")
 
+        if st.button("EOD Refresh (RVX)", key="mm_eod_refresh"):
+            st.session_state["mm_trigger_eod_refresh"] = True
+            st.rerun()
+        st.caption(
+            "Fetches settled daily closes from RVX since the last cached date — "
+            "useful for catching the cache up between the scheduled 4:45 PM ET runs."
+        )
+
         if st.button("Clear market cache", key="mm_clear"):
             clear_mm_cache()
             st.success("Market monitor cache cleared.")

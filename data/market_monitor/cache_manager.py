@@ -18,6 +18,15 @@ import pandas as pd
 
 from config import MM_CACHE_DIR, MM_CACHE_MAX_AGE_HOURS, MM_DEFAULT_LOOKBACK_DAYS
 
+# Result type for incremental_eod_refresh — used by both the CLI script and
+# the sidebar button so they share success/failure shape.
+@dataclass
+class EodRefreshResult:
+    added_days: int          # number of new business days appended
+    last_date: date          # last cached date AFTER the refresh
+    failed_tickers: list[str]
+    skipped_reason: str | None = None  # populated only when nothing was fetched
+
 logger = logging.getLogger(__name__)
 
 _PRICES_FILE = Path(MM_CACHE_DIR) / "prices.parquet"
@@ -147,3 +156,75 @@ def clear_cache() -> None:
         if f.exists():
             f.unlink()
     logger.info("Market monitor cache cleared")
+
+
+def incremental_eod_refresh(
+    progress_callback=None,
+) -> EodRefreshResult:
+    """Fetch settled EOD closes for all cached tickers since the last cached date.
+
+    Pulls from RVX (settled daily closes — distinct from the live yfinance
+    refresh which only updates today's intraday quote). Merges the new rows
+    into the existing cache via ``merge_incremental`` (combine_first pattern,
+    so any overlapping date prefers the newly-fetched value).
+
+    Designed to be called from BOTH the offline scheduled script
+    (``scripts/refresh_market_data.py --eod``) and the Streamlit sidebar
+    button, so the two paths stay byte-for-byte consistent.
+
+    Args:
+        progress_callback: Optional callable(completed, total) for live UI
+            progress updates. Forwarded to ``rvx_fetcher.fetch_prices``.
+
+    Returns:
+        ``EodRefreshResult`` with ``added_days``, ``last_date``, and
+        ``failed_tickers``. ``skipped_reason`` is populated when no fetch
+        happened (e.g., cache empty, cache already current).
+    """
+    # Late import: rvx_fetcher pulls in ECM credentials at import time which
+    # we don't want to execute on Render where ECM is unavailable.
+    from data.market_monitor.rvx_fetcher import fetch_prices
+
+    cached = load_cached_prices()
+    if cached is None or cached.empty:
+        return EodRefreshResult(
+            added_days=0,
+            last_date=date.today(),
+            failed_tickers=[],
+            skipped_reason="No cached data — run a full historical refresh first.",
+        )
+
+    last_date = cached.index.max().date()
+    today = date.today()
+    if last_date >= today:
+        return EodRefreshResult(
+            added_days=0,
+            last_date=last_date,
+            failed_tickers=[],
+            skipped_reason=f"Cache already current ({last_date}).",
+        )
+
+    all_tickers = list(cached.columns)
+    new_prices, failed = fetch_prices(
+        all_tickers,
+        last_date.isoformat(),
+        today.isoformat(),
+        progress_callback=progress_callback,
+    )
+
+    if new_prices.empty:
+        return EodRefreshResult(
+            added_days=0,
+            last_date=last_date,
+            failed_tickers=failed,
+            skipped_reason="RVX returned no new data.",
+        )
+
+    merged = merge_incremental(cached, new_prices)
+    save_prices(merged)
+    added = max(0, len(merged) - len(cached))
+    return EodRefreshResult(
+        added_days=added,
+        last_date=merged.index.max().date(),
+        failed_tickers=failed,
+    )
