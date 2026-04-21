@@ -15,6 +15,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 import streamlit as st
@@ -113,6 +114,7 @@ def _fetch_one_gadget(
 def _fetch_from_prismatic(
     start_date: str | None = None,
     max_workers: int = 9,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """Fetch raw cumulative return data from all factor gadgets in parallel.
 
@@ -127,16 +129,20 @@ def _fetch_from_prismatic(
         max_workers: Thread pool size for parallel gadget fetches. The
             sequential per-gadget cost is dominated by network round-trip
             to Prismatic; parallelism cuts wall time roughly N-fold.
+        progress_callback: Optional ``(completed, total)`` callback fired on
+            the main thread each time a gadget future resolves. Used by the
+            sidebar to render a progress bar during refresh.
 
     Returns:
         DataFrame of raw cumulative returns (not price indices), indexed by
         date with one column per factor name.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from data.ecm_client import ECMFetchError
 
     items = list(FACTOR_GADGET_IDS.items())
+    total = len(items)
     all_series: dict[str, pd.Series] = {}
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -144,10 +150,14 @@ def _fetch_from_prismatic(
             ex.submit(_fetch_one_gadget, gid, name, start_date)
             for gid, name in items
         ]
-        for fut in futures:
+        completed = 0
+        for fut in as_completed(futures):
             name, series = fut.result()
             if series is not None:
                 all_series[name] = series
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(completed, total)
 
     if not all_series:
         raise ECMFetchError("No factor data retrieved from any Prismatic gadget.")
@@ -210,7 +220,9 @@ def load_factor_data() -> FactorData:
     return _load_prismatic_with_cache()
 
 
-def clear_factor_cache():
+def clear_factor_cache(
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> None:
     """Force a full re-fetch from Prismatic and clear Streamlit's in-memory cache.
 
     Behavior:
@@ -222,13 +234,18 @@ def clear_factor_cache():
         history, so a parallel full re-fetch is the correct trade-off.
       * Render (no ECM): clears Streamlit's in-memory cache only; the
         committed Parquet remains the source of truth.
+
+    Args:
+        progress_callback: Optional ``(completed, total)`` callback forwarded
+            to ``_fetch_from_prismatic`` so the caller (e.g. sidebar) can
+            render a progress bar.
     """
     load_factor_data.clear()
     from data.ecm_client import is_available
 
     if is_available():
         try:
-            cumulative = _fetch_from_prismatic()
+            cumulative = _fetch_from_prismatic(progress_callback=progress_callback)
             _save_to_cache(cumulative)
         except Exception as e:  # pragma: no cover — defensive
             logger.warning(f"Factor cache refresh failed: {e}")

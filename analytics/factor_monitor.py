@@ -128,18 +128,30 @@ def estimate_stock_factor_betas(
     factor_returns: pd.DataFrame,
     market_returns: pd.Series,
     window: int = MM_FACTOR_BETA_WINDOW,
+    start_date: pd.Timestamp | None = None,
+    end_date: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Estimate factor betas for each stock via rolling OLS.
+    """Estimate factor betas for each stock via OLS over a chosen range.
 
     Model: stock_return = alpha + beta_mkt * market + sum(beta_i * factor_i) + epsilon
 
     Uses numpy.linalg.lstsq (same pattern as analytics/factor_analytics.py).
 
+    Date selection:
+        * If ``start_date`` or ``end_date`` is provided, the OLS is run over
+          the aligned daily observations inside that range (inclusive on both ends).
+        * Otherwise the trailing ``window`` days are used (backward-compatible
+          default for callers like trade_ideas_tab that want a fixed tactical
+          lookback).
+
     Args:
         stock_returns: DataFrame (DatetimeIndex × ticker columns, daily returns).
         factor_returns: DataFrame (DatetimeIndex × factor columns, daily returns).
         market_returns: Series (DatetimeIndex, daily market returns — e.g., SPX).
-        window: Lookback window for OLS.
+        window: Trailing lookback used only when both ``start_date`` and
+            ``end_date`` are None.
+        start_date: Optional lower bound (inclusive) for the OLS window.
+        end_date: Optional upper bound (inclusive) for the OLS window.
 
     Returns:
         DataFrame with tickers as index, factor names as columns (beta values).
@@ -148,9 +160,17 @@ def estimate_stock_factor_betas(
     common_idx = stock_returns.index.intersection(
         factor_returns.index
     ).intersection(market_returns.index)
-    common_idx = common_idx[-window:]  # use most recent window
 
-    if len(common_idx) < max(30, window // 2):
+    if start_date is not None or end_date is not None:
+        if start_date is not None:
+            common_idx = common_idx[common_idx >= pd.Timestamp(start_date)]
+        if end_date is not None:
+            common_idx = common_idx[common_idx <= pd.Timestamp(end_date)]
+    else:
+        common_idx = common_idx[-window:]  # trailing window fallback
+
+    min_obs = 30
+    if len(common_idx) < min_obs:
         return pd.DataFrame()
 
     stock_r = stock_returns.loc[common_idx]
@@ -167,11 +187,12 @@ def estimate_stock_factor_betas(
     factor_names = ["Market"] + list(factor_r.columns)
     betas = {}
 
+    min_valid = max(20, len(common_idx) // 4)
     for ticker in stock_r.columns:
         y = stock_r[ticker].values
         valid = ~np.isnan(y) & ~np.isnan(X).any(axis=1)
 
-        if valid.sum() < max(20, window // 4):
+        if valid.sum() < min_valid:
             continue
 
         try:

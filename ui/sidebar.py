@@ -225,7 +225,18 @@ def render_sidebar() -> dict | None:
             clear_cache()
             st.success("Cache cleared. Data will be re-fetched on next run.")
         if st.button("Reload factor data", key="reload_factors"):
-            clear_factor_cache()
+            progress_bar = st.progress(0.0, text="Fetching factor data from Prismatic...")
+
+            def _on_factor_progress(completed, total):
+                progress_bar.progress(
+                    completed / total,
+                    text=f"Prismatic: {completed}/{total} factors",
+                )
+
+            try:
+                clear_factor_cache(progress_callback=_on_factor_progress)
+            finally:
+                progress_bar.empty()
             st.rerun()
 
         st.divider()

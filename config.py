@@ -187,7 +187,7 @@ MM_COMPOSITE_WEIGHTS = {
 }
 
 # Factor monitor
-MM_FACTOR_BETA_WINDOW = 120  # OLS lookback for stock-level factor betas
+MM_FACTOR_BETA_WINDOW = 120  # trailing-window fallback (used by callers that don't pass explicit dates, e.g. trade_ideas_tab)
 MM_FACTOR_TREND_SHORT = 20  # short MA for trend detection
 MM_FACTOR_TREND_LONG = 60  # long MA for trend detection
 

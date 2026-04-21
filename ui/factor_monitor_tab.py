@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from analytics.factor_monitor import compute_factor_monitor
+from analytics.factor_monitor import compute_factor_monitor, estimate_stock_factor_betas
 from data.market_monitor.constituents import get_name_map, get_sector_map
 from ui.style import PLOTLY_LAYOUT
+
+# Default UI span for the Factor Monitor beta date range (calendar days ~6 months).
+_DEFAULT_BETA_SPAN_DAYS = 180
 
 
 def _factor_cumulative_chart(factor_returns, title: str = "Factor Cumulative Returns") -> go.Figure:
@@ -103,7 +109,9 @@ def render_factor_monitor_tab(prices, factor_data, mm_data_available: bool) -> N
 
     factor_returns = factor_data.returns
 
-    # Compute stock-level betas if market data available
+    # Stash stock / market returns for the user-controlled beta section below.
+    # The top-level compute deliberately skips betas so the performance /
+    # trend sections don't recompute when the beta-window slider changes.
     stock_returns = None
     market_returns = None
     if mm_data_available and prices is not None and not prices.empty:
@@ -112,7 +120,7 @@ def render_factor_monitor_tab(prices, factor_data, mm_data_available: bool) -> N
         if "SPX" in prices.columns:
             market_returns = prices["SPX"].pct_change().dropna()
 
-    result = compute_factor_monitor(factor_returns, stock_returns, market_returns)
+    result = compute_factor_monitor(factor_returns)
 
     # --- Factor performance cards ---
     st.subheader("Factor Performance")
@@ -155,12 +163,68 @@ def render_factor_monitor_tab(prices, factor_data, mm_data_available: bool) -> N
     st.divider()
     st.subheader("Stock Factor Exposures")
 
-    if result.stock_factor_betas.empty:
+    if stock_returns is None or market_returns is None:
         st.info("Stock-level factor betas require S&P 500 price data. Refresh market data first.")
         return
 
+    # Bounds for the date picker: intersection of what the three series cover.
+    common_idx = (
+        stock_returns.index
+        .intersection(factor_returns.index)
+        .intersection(market_returns.index)
+    )
+    if common_idx.empty:
+        st.info("No overlapping dates across stock, factor, and market data.")
+        return
+
+    data_min = common_idx.min().date()
+    data_max = common_idx.max().date()
+    default_start = max(data_min, data_max - timedelta(days=_DEFAULT_BETA_SPAN_DAYS))
+
+    col_start, col_end = st.columns(2)
+    with col_start:
+        beta_start = st.date_input(
+            "Beta start",
+            value=default_start,
+            min_value=data_min,
+            max_value=data_max,
+            key="mm_factor_beta_start",
+            help="Start of OLS window for per-stock factor betas.",
+        )
+    with col_end:
+        beta_end = st.date_input(
+            "Beta end",
+            value=data_max,
+            min_value=data_min,
+            max_value=data_max,
+            key="mm_factor_beta_end",
+            help="End of OLS window for per-stock factor betas.",
+        )
+
+    if beta_end < beta_start:
+        st.error("Beta end date must be on or after beta start date.")
+        return
+
+    stock_factor_betas = estimate_stock_factor_betas(
+        stock_returns, factor_returns, market_returns,
+        start_date=pd.Timestamp(beta_start),
+        end_date=pd.Timestamp(beta_end),
+    )
+
+    if stock_factor_betas.empty:
+        st.info("Insufficient overlapping observations in the selected range.")
+        return
+
+    n_obs_window = len(
+        common_idx[(common_idx >= pd.Timestamp(beta_start)) & (common_idx <= pd.Timestamp(beta_end))]
+    )
+    st.caption(
+        f"Regressing each stock on {len(factor_returns.columns)} factors + market over "
+        f"{beta_start:%Y-%m-%d} → {beta_end:%Y-%m-%d} ({n_obs_window} trading days)."
+    )
+
     # Factor selector
-    available_factors = [c for c in result.stock_factor_betas.columns if c != "Market"]
+    available_factors = [c for c in stock_factor_betas.columns if c != "Market"]
     if not available_factors:
         st.info("No factor beta data available.")
         return
@@ -170,7 +234,7 @@ def render_factor_monitor_tab(prices, factor_data, mm_data_available: bool) -> N
     )
 
     # Top exposures
-    betas = result.stock_factor_betas[selected_factor].dropna().sort_values(ascending=False)
+    betas = stock_factor_betas[selected_factor].dropna().sort_values(ascending=False)
 
     col_long, col_short = st.columns(2)
 
